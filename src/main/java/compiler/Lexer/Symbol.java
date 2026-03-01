@@ -28,19 +28,23 @@ public class Symbol {
     private SymbolType type;
     private String value;
 
+    // Constructor for creating a symbol with a type and an value (value is optional for certain tokens)
     public Symbol(SymbolType type, String value) {
         this.type = type;
         this.value = value;
     }
 
+    // Return the type of the symbol
     public SymbolType getType() {
         return type;
     }
 
+    // Return the value of the symbol (if necessary)
     public String getValue() {
         return value;
     }
 
+    // Override toString for easy debugging and creating our token representation
     @Override
     public String toString() {
         if (value == null) {
