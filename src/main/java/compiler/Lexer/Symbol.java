@@ -1,27 +1,50 @@
 package compiler.Lexer;
 
+/*
+    * We will regroup symbols that will be verify in the same function.
+    * Each function will describe the hierarchy of the symbols, which one is tested first.
+*/
+
 public enum SymbolType {
+    // Literals / names
     IDENTIFIER, /* Variables */
     KEYWORD, /* if, else, while, for, return, etc. */
+    COLLECTION_NAME, // starts with Capital letter, for example: List, Set, Map, etc.
     INT,
     FLOAT,
-    BOOL, /* Boolean literals: true, false */
+    BOOLEAN, /* Boolean literals: true, false */
     STRING,
-    LITERAL, /* General literals (could be used for various types) */
-    CONSTANT,
-    ASSIGNMENTOPERATOR,
-    ARITHMETICOPERATOR, /* +, -, *, / */
-    MODULOOPERATOR, /* % */
-    COMPARISONOPERATOR, /* ==, =/=, <, >, <=, >= */
-    LOGICAL_AND, /* && */
-    LOGICAL_OR, /* || */
-    LOGICAL_NOT, /* ! */
-    SEPARATOR, /* , */
-    COMMENT,
-    LEFTPAREN,
-    RIGHTPAREN,
-    SEMICOLON,
-    EOF
+
+    // Operators
+    ASSIGNMENTOPERATOR, /* = */
+    PLUS,
+    MINUS,
+    MULT, /* * for multiplication */
+    DIV, /* / for division */
+    MOD, /* % for modulo */
+    NEGATION, /* - for negative values */
+
+    // Logical and comparison operators
+    EQ, /* == */
+    NEQ, /* =/= */
+    LT, /* < */
+    GT, /* > */
+    LE, /* <= */
+    GE, /* >= */
+    AND, /* && */
+    OR, /* || */
+
+    // Delimiters and punctuation
+    LPAREN, /* ( */
+    RPAREN, /* ) */
+    LBRACE, /* { */
+    RBRACE, /* } */
+    LBRACKET, /* [ */
+    RBRACKET, /* ] */
+    COMMA, /* , */
+    SEMICOLON, /* ; */
+    DOT, /* . */
+    EOF /* End of file */
 }
 
 public class Symbol {
