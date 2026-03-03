@@ -63,8 +63,25 @@ public class Lexer {
             return lexString();
         }
 
+        if (isSymbolStart(currentChar)) {
+            skipWhitespace();
+            return lexSymbol();
+        }
+
         // Runtime exception for unrecognized characters
         throw new RuntimeException("Unrecognized character: " + (char) currentChar);
+    }
+
+    private boolean isSymbolStart(int c) {
+        String symbols = "=+-*/%<>(){}[].&|;,";
+
+        int position = symbols.indexOf(c);
+
+        if (position == -1) {
+            return false;
+        } else {
+            return true;
+        }
     }
 
     // Function to skip whitespace and comments.
@@ -239,5 +256,111 @@ public class Lexer {
 
         advance(); // Skip the closing double quote
         return new Symbol(SymbolType.STRING, sb.toString());
+    }
+
+    private void skipWhitespace() throws IOException {
+        while (currentChar == ' ' || currentChar == '\t' || currentChar == '\n' || currentChar == '\r') {
+            advance();
+        }
+    }
+
+    private Symbol lexSymbol() throws IOException {
+        int first = currentChar;
+        advance();
+
+        switch (first) {
+
+            case '=':
+                if (currentChar == '=') {
+                    advance();
+                    return new Symbol(SymbolType.EQ, "==");
+                } else if (currentChar == '/') {
+                    advance();
+                    if (currentChar == '=') {
+                        advance();
+                        return new Symbol(SymbolType.NEQ, "=/=");
+                    } else {
+                        throw new RuntimeException("Invalid symbol");
+                    }
+                }
+                return new Symbol(SymbolType.ASSIGNMENTOPERATOR, "=");
+
+            case '<':
+                if (currentChar == '=') {
+                    advance();
+                    return new Symbol(SymbolType.LE, "<=");
+                }
+                return new Symbol(SymbolType.LT, "<");
+
+            case '>':
+                if (currentChar == '=') {
+                    advance();
+                    return new Symbol(SymbolType.GE, ">=");
+                }
+                return new Symbol(SymbolType.GT, ">");
+
+            case '&':
+                if (currentChar == '&') {
+                    advance();
+                    return new Symbol(SymbolType.AND, "&&");
+                }
+                throw new RuntimeException("Invalid symbol");
+
+            case '|':
+                if (currentChar == '|') {
+                    advance();
+                    return new Symbol(SymbolType.OR, "||");
+                }
+                throw new RuntimeException("Invalid symbol");
+
+            // Simple Operator
+
+            case '+':
+                return new Symbol(SymbolType.PLUS, "+");
+
+            case '-':
+                return new Symbol(SymbolType.MINUS, "-");
+
+            case '*':
+                return new Symbol(SymbolType.MULT, "*");
+
+            case '/':
+                return new Symbol(SymbolType.DIV, "/");
+
+            case '%':
+                return new Symbol(SymbolType.MOD, "%");
+
+            // Delimiters
+
+            case '(':
+                return new Symbol(SymbolType.LPAREN, "(");
+
+            case ')':
+                return new Symbol(SymbolType.RPAREN, ")");
+
+            case '{':
+                return new Symbol(SymbolType.LBRACE, "{");
+
+            case '}':
+                return new Symbol(SymbolType.RBRACE, "}");
+
+            case '[':
+                return new Symbol(SymbolType.LBRACKET, "[");
+
+            case ']':
+                return new Symbol(SymbolType.RBRACKET, "]");
+
+            case ';':
+                return new Symbol(SymbolType.SEMICOLON, ";");
+
+            case ',':
+                return new Symbol(SymbolType.COMMA, ",");
+
+            case '.':
+                return new Symbol(SymbolType.DOT, ".");
+
+            default:
+                throw new RuntimeException("Unrecognized symbol");
+        }
     }
 }
