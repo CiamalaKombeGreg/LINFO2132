@@ -10,7 +10,7 @@ public class Lexer {
     private int currentChar; // Current character being analyzed
 
     private static final java.util.Set<String> Keywords = java.util.Set.of(
-        "final", "coll", "def", "for", "while", "if", "else", "return", "not", "ARRAY","INT", "FLOAT", "BOOL", "STRING"
+        "final", "coll", "def", "for", "while", "if", "else", "return", "not", "ARRAY","int", "float", "boolean", "string"
     );
     
     // Constructor to initialize the lexer with an input source
@@ -51,6 +51,11 @@ public class Lexer {
         // Handle literals, keywords, and identifiers.
         if (isLiteral(currentChar)) {
             return lexWord();
+        }
+
+        // Handle numbers and dots. A dot can be a DOT from the syntax or the start of a float.
+        if (Character.isDigit(currentChar) || currentChar == '.') {
+            return isSyntaxDot(currentChar);
         }
 
         // Runtime exception for unrecognized characters
@@ -108,7 +113,94 @@ public class Lexer {
             return new Symbol(SymbolType.COLLECTION_NAME, word);
         }
 
+        // Identifier is last because it can be a keyword or a collection name, so we check those first. If it's not a keyword or a collection name, then it's an identifier.
         return new Symbol(SymbolType.IDENTIFIER, word);
     }
 
+    // Function to handle the dots so we know if it's a float or just a dot. lexNumber will handle the following digits and the fractional part if it's a float.
+    private Symbol isSyntaxDot(int c) throws IOException {
+        if (c == '.') {
+            int next = input.read();
+            // In case of EOF after a dot.
+            if (next == -1) {
+                return new Symbol(SymbolType.DOT, ".");
+            }
+            // If the next character is not a digit, then we consider it a DOT symbol.
+            if (!Character.isDigit(next)) {
+                unread(next);
+                advance(); // We move past the dot since we don't need it anymore.
+                return new Symbol(SymbolType.DOT, ".");
+            }
+            // If the next character is a digit, we push it back so that the lexNumber function can handle it as part of the float.
+            unread(next);
+        }
+        return lexNumber();
+    }
+
+    // To handle numbers, we need to consider both integers and floats. A float can start with a dot or have a dot in the middle.
+    private Symbol lexNumber() throws IOException {
+        StringBuilder sb = new StringBuilder();
+        boolean isFloat = false; // We will know if we already encountered a dot in the number.
+
+        // In case we start with a dot, we need to handle it as the start of a float.
+        if (currentChar == '.') {
+            isFloat = true;
+            sb.append('.');
+            advance();
+        }
+
+        // Handling digits before or after the dot (if any)
+        while (currentChar != -1 && Character.isDigit(currentChar)) {
+            sb.append((char) currentChar);
+            advance();
+        }
+
+        // If we already have a dot and we encounter another dot.
+        if (isFloat && currentChar == '.') {
+            throw new RuntimeException("Malformed float literal (multiple dots)");
+        }
+
+        // In case we started with digits and then we encounter a dot. We only allow one dot in a number, so if we already have a dot, we don't consider it as part of the number.
+        if (!isFloat && currentChar == '.') {
+            isFloat = true;
+            sb.append('.');
+            advance();
+
+            // Require at least one digit after dot. We avoid accepting something like "3." as valid.
+            if (currentChar == -1 || !Character.isDigit(currentChar)) {
+                throw new RuntimeException("Malformed float literal (missing digits after '.')");
+            }
+
+            // Handling digits after the dot.
+            while (currentChar != -1 && Character.isDigit(currentChar)) {
+                sb.append((char) currentChar);
+                advance();
+            }
+        }
+
+        String raw = sb.toString();
+
+        if (!isFloat) {
+            return new Symbol(SymbolType.INT, removeLeadingZeros(raw));
+        } else {
+            String normalized = raw;
+            if (normalized.startsWith(".")) normalized = "0" + normalized; // Handle floats that start with a dot.
+
+            // Normalize int part zeros: 0003.14 -> 3.14
+            int dotIndex = normalized.indexOf('.');
+            if (dotIndex > 0) {
+                String intPart = removeLeadingZeros(normalized.substring(0, dotIndex));
+                String fracPart = normalized.substring(dotIndex);
+                normalized = intPart + fracPart;
+            }
+            return new Symbol(SymbolType.FLOAT, normalized);
+        }
+    }
+
+    // Function to strip leading zeros from an integer string, for example "000123" -> "123".
+    private String removeLeadingZeros(String s) {
+        int i = 0;
+        while (i < s.length() - 1 && s.charAt(i) == '0') i++;
+        return s.substring(i);
+    }
 }
