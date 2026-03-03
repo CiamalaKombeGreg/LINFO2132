@@ -10,7 +10,7 @@ public class Lexer {
     private int currentChar; // Current character being analyzed
 
     private static final java.util.Set<String> Keywords = java.util.Set.of(
-        "final", "coll", "def", "for", "while", "if", "else", "return", "not", "ARRAY","int", "float", "boolean", "string"
+        "final", "coll", "def", "for", "while", "if", "else", "return", "not", "ARRAY","INT", "FLOAT", "BOOLEAN", "STRING"
     );
     
     // Constructor to initialize the lexer with an input source
@@ -56,6 +56,11 @@ public class Lexer {
         // Handle numbers and dots. A dot can be a DOT from the syntax or the start of a float.
         if (Character.isDigit(currentChar) || currentChar == '.') {
             return isSyntaxDot(currentChar);
+        }
+
+        // Handling string literals. We know they start with a double quote.
+        if (currentChar == '"') {
+            return lexString();
         }
 
         // Runtime exception for unrecognized characters
@@ -202,5 +207,37 @@ public class Lexer {
         int i = 0;
         while (i < s.length() - 1 && s.charAt(i) == '0') i++;
         return s.substring(i);
+    }
+
+    private Symbol lexString() throws IOException {
+        StringBuilder sb = new StringBuilder();
+        advance(); // Let's skip the opening double quote
+
+        while (currentChar != -1 && currentChar != '"') {
+            if (currentChar == '\\') { // Handle escape sequences, we know they start with a backslash.
+                advance();
+                if (currentChar == -1) {
+                    throw new RuntimeException("Incomplete string literal");
+                }
+                switch (currentChar) {
+                    case 'n' -> sb.append('\n');
+                    case 't' -> sb.append('\t');
+                    case 'r' -> sb.append('\r');
+                    case '"' -> sb.append('\"');
+                    case '\\' -> sb.append('\\');
+                    default -> throw new RuntimeException("Invalid escape sequence: \\" + (char) currentChar);
+                }
+            } else {
+                sb.append((char) currentChar);
+            }
+            advance();
+        }
+
+        if (currentChar == -1) {
+            throw new RuntimeException("Incomplete string literal");
+        }
+
+        advance(); // Skip the closing double quote
+        return new Symbol(SymbolType.STRING, sb.toString());
     }
 }
