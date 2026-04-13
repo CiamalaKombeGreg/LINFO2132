@@ -11,6 +11,18 @@ public class BinaryExprNode extends ExprNode {
         this.right = right;
     }
 
+    public String getOperator() {
+        return operator;
+    }
+
+    public ExprNode getLeft() {
+        return left;
+    }
+
+    public ExprNode getRight() {
+        return right;
+    }
+
     @Override
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();

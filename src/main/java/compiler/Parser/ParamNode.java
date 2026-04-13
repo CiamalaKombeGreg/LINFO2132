@@ -9,6 +9,14 @@ public class ParamNode extends ASTNode {
         this.name = name;
     }
 
+    public String getType() {
+        return type;
+    }
+
+    public String getName() {
+        return name;
+    }
+
     @Override
     public String toString(String indent) {
         return indent + "Param, " + type + " " + name + "\n";

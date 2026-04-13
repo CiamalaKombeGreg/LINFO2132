@@ -9,6 +9,14 @@ public class IndexAccessNode extends ExprNode {
         this.index = index;
     }
 
+    public ExprNode getTarget() {
+        return target;
+    }
+
+    public ExprNode getIndex() {
+        return index;
+    }
+
     @Override
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();

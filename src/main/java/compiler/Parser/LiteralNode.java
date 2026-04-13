@@ -9,6 +9,14 @@ public class LiteralNode extends ExprNode {
         this.value = value;
     }
 
+    public String getKind() {
+        return kind;
+    }
+
+    public String getValue() {
+        return value;
+    }
+
     @Override
     public String toString(String indent) {
         return indent + kind + ", " + value + "\n";

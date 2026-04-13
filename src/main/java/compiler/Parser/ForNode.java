@@ -13,6 +13,22 @@ public class ForNode extends StatementNode {
         this.body = body;
     }
 
+    public ASTNode getInit() {
+        return init;
+    }
+
+    public ExprNode getCondition() {
+        return condition;
+    }
+
+    public ASTNode getUpdate() {
+        return update;
+    }
+
+    public StatementNode getBody() {
+        return body;
+    }
+
     @Override
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();

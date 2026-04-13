@@ -9,6 +9,14 @@ public class FieldAccessNode extends ExprNode {
         this.fieldName = fieldName;
     }
 
+    public ExprNode getTarget() {
+        return target;
+    }
+
+    public String getFieldName() {
+        return fieldName;
+    }
+
     @Override
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();

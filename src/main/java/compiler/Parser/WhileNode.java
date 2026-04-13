@@ -9,6 +9,14 @@ public class WhileNode extends StatementNode {
         this.body = body;
     }
 
+    public ExprNode getCondition() {
+        return condition;
+    }
+
+    public StatementNode getBody() {
+        return body;
+    }
+
     @Override
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();

@@ -11,6 +11,14 @@ public class CallNode extends ExprNode {
         this.args = args;
     }
 
+    public ExprNode getCallee() {
+        return callee;
+    }
+
+    public List<ExprNode> getArgs() {
+        return args;
+    }
+
     @Override
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();

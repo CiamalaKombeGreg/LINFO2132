@@ -7,6 +7,10 @@ public class ReturnNode extends StatementNode {
         this.expr = expr;
     }
 
+    public ExprNode getExpr() {
+        return expr;
+    }
+
     @Override
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();

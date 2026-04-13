@@ -9,6 +9,14 @@ public class UnaryExprNode extends ExprNode {
         this.expr = expr;
     }
 
+    public String getOperator() {
+        return operator;
+    }
+
+    public ExprNode getExpr() {
+        return expr;
+    }
+
     @Override
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();

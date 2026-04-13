@@ -11,6 +11,14 @@ public class CollDeclNode extends ASTNode {
         this.name = name;
     }
 
+    public String getName() {
+        return name;
+    }
+
+    public List<FieldNode> getFields() {
+        return fields;
+    }
+
     public void addField(FieldNode field) {
         fields.add(field);
     }

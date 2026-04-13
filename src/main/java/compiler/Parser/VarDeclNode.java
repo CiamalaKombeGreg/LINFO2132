@@ -13,6 +13,22 @@ public class VarDeclNode extends StatementNode {
         this.initializer = initializer;
     }
 
+    public boolean isFinal() {
+        return isFinal;
+    }
+
+    public String getType() {
+        return type;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public ExprNode getInitializer() {
+        return initializer;
+    }
+
     @Override
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();

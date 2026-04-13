@@ -10,6 +10,10 @@ public class BlockNode extends StatementNode {
         statements.add(stmt);
     }
 
+    public List<StatementNode> getStatements() {
+        return statements;
+    }
+
     @Override
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();

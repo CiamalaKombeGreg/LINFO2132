@@ -9,6 +9,14 @@ public class AssignmentNode extends StatementNode {
         this.value = value;
     }
 
+    public ExprNode getTarget() {
+        return target;
+    }
+
+    public ExprNode getValue() {
+        return value;
+    }
+
     @Override
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();

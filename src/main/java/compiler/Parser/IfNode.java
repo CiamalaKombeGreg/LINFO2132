@@ -11,6 +11,18 @@ public class IfNode extends StatementNode {
         this.elseBranch = elseBranch;
     }
 
+    public ExprNode getCondition() {
+        return condition;
+    }
+
+    public StatementNode getThenBranch() {
+        return thenBranch;
+    }
+
+    public StatementNode getElseBranch() {
+        return elseBranch;
+    }
+
     @Override
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();

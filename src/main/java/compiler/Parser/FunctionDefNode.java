@@ -15,6 +15,22 @@ public class FunctionDefNode extends ASTNode {
         this.body = body;
     }
 
+    public String getReturnType() {
+        return returnType;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public List<ParamNode> getParams() {
+        return params;
+    }
+
+    public BlockNode getBody() {
+        return body;
+    }
+
     @Override
     public String toString(String indent) {
         StringBuilder sb = new StringBuilder();
