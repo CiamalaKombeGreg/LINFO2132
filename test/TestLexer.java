@@ -43,7 +43,7 @@ public class TestLexer {
                 # comment
                 final INT x = 00342;
                 FLOAT y = .234;
-                BOOLEAN b = true;
+                BOOL b = true;
                 STRING s = "He said: \\"hi\\"";
                 List t = (x <= 10) && (b || false);
                 a.b;""";
@@ -65,8 +65,8 @@ public class TestLexer {
         expect(lexer, SymbolType.FLOAT, "0.234");
         expectOp(lexer, SymbolType.SEMICOLON, ";");
 
-        // BOOLEAN b = true;
-        expect(lexer, SymbolType.KEYWORD, "BOOLEAN");
+        // BOOL b = true;
+        expect(lexer, SymbolType.KEYWORD, "BOOL");
         expect(lexer, SymbolType.IDENTIFIER, "b");
         expectOp(lexer, SymbolType.ASSIGNMENTOPERATOR, "=");
         expect(lexer, SymbolType.BOOLEAN, "true");

@@ -17,6 +17,7 @@ public enum SymbolType {
     MULT, /* * for multiplication */
     DIV, /* / for division */
     MOD, /* % for modulo */
+    ARROW, /* -> for function return type */
 
     // Logical and comparison operators
     EQ, /* == */

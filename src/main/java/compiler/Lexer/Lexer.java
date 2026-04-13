@@ -10,7 +10,8 @@ public class Lexer {
     private int currentChar; // Current character being analyzed
 
     private static final java.util.Set<String> Keywords = java.util.Set.of(
-        "final", "coll", "def", "for", "while", "if", "else", "return", "not", "ARRAY","INT", "FLOAT", "BOOL", "STRING"
+        "final", "coll", "def", "for", "while", "if", "else", "return", "not",
+        "ARRAY", "INT", "FLOAT", "BOOL", "STRING"
     );
     
     // Constructor to initialize the lexer with an input source
@@ -319,6 +320,10 @@ public class Lexer {
                 return new Symbol(SymbolType.PLUS, "+");
 
             case '-':
+                if (currentChar == '>') {
+                    advance();
+                    return new Symbol(SymbolType.ARROW, "->");
+                }
                 return new Symbol(SymbolType.MINUS, "-");
 
             case '*':
