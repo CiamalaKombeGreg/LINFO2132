@@ -6,6 +6,7 @@ import java.io.Reader;
 import compiler.Lexer.Lexer;
 import compiler.Parser.ASTNode;
 import compiler.Parser.Parser;
+import compiler.Semantic.SemanticAnalyzer;
 
 public class Compiler {
     public static void main(String[] args) {
@@ -19,26 +20,33 @@ public class Compiler {
 
         try (Reader reader = new FileReader(path)) {
             switch (mode) {
-                case "-lexer":
-                    {
+                case "-lexer" ->                     {
                         Lexer lexer = new Lexer(reader);
                         while (true) {
                             var s = lexer.getNextSymbol();
                             System.out.println(s);
                             if (s.getType().name().equals("EOF")) break;
-                        }       break;
-                    }
-                case "-parser":
-                    {
+                        }                          }
+                case "-parser" ->                     {
                         Lexer lexer = new Lexer(reader);
                         Parser parser = new Parser(lexer);
                         ASTNode ast = parser.getAST();
                         System.out.println(ast);
-                        break;
                     }
-                default:
+                case "-semantic" ->                     {
+                        Lexer lexer = new Lexer(reader);
+                        Parser parser = new Parser(lexer);
+                        ASTNode ast = parser.getAST();
+
+                        SemanticAnalyzer analyzer = new SemanticAnalyzer();
+                        analyzer.analyze(ast);
+
+                        System.out.println("Semantic analysis successful");
+                    }
+                default -> {
                     System.err.println("Unknown mode: " + mode);
                     System.exit(1);
+                }
             }
         } catch (Exception e) {
             System.err.println(e.getMessage());
