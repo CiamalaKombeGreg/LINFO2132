@@ -10,39 +10,54 @@ import compiler.Semantic.SemanticAnalyzer;
 
 public class Compiler {
     public static void main(String[] args) {
-        if (args.length < 2) {
-            System.err.println("Usage: -lexer <file> or -parser <file>");
-            System.exit(1);
-        }
+        String mode;
+        String path;
 
-        String mode = args[0];
-        String path = args[1];
+        switch (args.length) {
+            case 1 -> {
+                mode = "-semantic";
+                path = args[0];
+            }
+            case 2 -> {
+                mode = args[0];
+                path = args[1];
+            }
+            default -> {
+                System.err.println("Usage: <file> or -lexer <file> or -parser <file> or -semantic <file>");
+                System.exit(1);
+                return;
+            }
+        }
 
         try (Reader reader = new FileReader(path)) {
             switch (mode) {
-                case "-lexer" ->                     {
-                        Lexer lexer = new Lexer(reader);
-                        while (true) {
-                            var s = lexer.getNextSymbol();
-                            System.out.println(s);
-                            if (s.getType().name().equals("EOF")) break;
-                        }                          }
-                case "-parser" ->                     {
-                        Lexer lexer = new Lexer(reader);
-                        Parser parser = new Parser(lexer);
-                        ASTNode ast = parser.getAST();
-                        System.out.println(ast);
+                case "-lexer" -> {
+                    Lexer lexer = new Lexer(reader);
+                    while (true) {
+                        var s = lexer.getNextSymbol();
+                        System.out.println(s);
+                        if (s.getType().name().equals("EOF")) break;
                     }
-                case "-semantic" ->                     {
-                        Lexer lexer = new Lexer(reader);
-                        Parser parser = new Parser(lexer);
-                        ASTNode ast = parser.getAST();
+                }
 
-                        SemanticAnalyzer analyzer = new SemanticAnalyzer();
-                        analyzer.analyze(ast);
+                case "-parser" -> {
+                    Lexer lexer = new Lexer(reader);
+                    Parser parser = new Parser(lexer);
+                    ASTNode ast = parser.getAST();
+                    System.out.println(ast);
+                }
 
-                        System.out.println("Semantic analysis successful");
-                    }
+                case "-semantic" -> {
+                    Lexer lexer = new Lexer(reader);
+                    Parser parser = new Parser(lexer);
+                    ASTNode ast = parser.getAST();
+
+                    SemanticAnalyzer analyzer = new SemanticAnalyzer();
+                    analyzer.analyze(ast);
+
+                    System.exit(0);
+                }
+
                 default -> {
                     System.err.println("Unknown mode: " + mode);
                     System.exit(1);
