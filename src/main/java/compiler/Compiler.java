@@ -46,9 +46,11 @@ public class Compiler {
                 generator.generate(program, outputPath);
 
                 System.exit(0);
+                return;
             } catch (Exception e) {
                 System.err.println(e.getMessage());
                 System.exit(1);
+                return;
             }
         }
 
