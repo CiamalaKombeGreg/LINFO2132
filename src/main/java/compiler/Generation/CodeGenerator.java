@@ -4,6 +4,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import static org.objectweb.asm.Opcodes.ACC_PUBLIC;
 import static org.objectweb.asm.Opcodes.ACC_STATIC;
@@ -13,6 +14,7 @@ import static org.objectweb.asm.Opcodes.ALOAD;
 import static org.objectweb.asm.Opcodes.ASTORE;
 import static org.objectweb.asm.Opcodes.BIPUSH;
 import static org.objectweb.asm.Opcodes.FADD;
+import static org.objectweb.asm.Opcodes.FCMPL;
 import static org.objectweb.asm.Opcodes.FCONST_0;
 import static org.objectweb.asm.Opcodes.FDIV;
 import static org.objectweb.asm.Opcodes.FLOAD;
@@ -21,6 +23,7 @@ import static org.objectweb.asm.Opcodes.FREM;
 import static org.objectweb.asm.Opcodes.FSTORE;
 import static org.objectweb.asm.Opcodes.FSUB;
 import static org.objectweb.asm.Opcodes.GETSTATIC;
+import static org.objectweb.asm.Opcodes.GOTO;
 import static org.objectweb.asm.Opcodes.IADD;
 import static org.objectweb.asm.Opcodes.ICONST_0;
 import static org.objectweb.asm.Opcodes.ICONST_1;
@@ -30,6 +33,18 @@ import static org.objectweb.asm.Opcodes.ICONST_4;
 import static org.objectweb.asm.Opcodes.ICONST_5;
 import static org.objectweb.asm.Opcodes.ICONST_M1;
 import static org.objectweb.asm.Opcodes.IDIV;
+import static org.objectweb.asm.Opcodes.IFEQ;
+import static org.objectweb.asm.Opcodes.IFGE;
+import static org.objectweb.asm.Opcodes.IFGT;
+import static org.objectweb.asm.Opcodes.IFLE;
+import static org.objectweb.asm.Opcodes.IFLT;
+import static org.objectweb.asm.Opcodes.IFNE;
+import static org.objectweb.asm.Opcodes.IF_ICMPEQ;
+import static org.objectweb.asm.Opcodes.IF_ICMPGE;
+import static org.objectweb.asm.Opcodes.IF_ICMPGT;
+import static org.objectweb.asm.Opcodes.IF_ICMPLE;
+import static org.objectweb.asm.Opcodes.IF_ICMPLT;
+import static org.objectweb.asm.Opcodes.IF_ICMPNE;
 import static org.objectweb.asm.Opcodes.ILOAD;
 import static org.objectweb.asm.Opcodes.IMUL;
 import static org.objectweb.asm.Opcodes.INVOKESPECIAL;
@@ -51,10 +66,12 @@ import compiler.Parser.ExprNode;
 import compiler.Parser.ExprStatementNode;
 import compiler.Parser.FunctionDefNode;
 import compiler.Parser.IdentifierNode;
+import compiler.Parser.IfNode;
 import compiler.Parser.LiteralNode;
 import compiler.Parser.ProgramNode;
 import compiler.Parser.StatementNode;
 import compiler.Parser.VarDeclNode;
+import compiler.Parser.WhileNode;
 
 public class CodeGenerator {
 
@@ -216,6 +233,59 @@ public class CodeGenerator {
             return;
         }
 
+        // If statement.
+        if (stmt instanceof IfNode ifNode) {
+            Label elseLabel = new Label();
+            Label endLabel = new Label();
+
+            // If condition is false, jump to else.
+            generateConditionJump(mv, ifNode.getCondition(), ctx, false, elseLabel);
+
+            // Then branch.
+            generateStatement(mv, ifNode.getThenBranch(), ctx);
+
+            // After then branch, skip else branch.
+            mv.visitJumpInsn(GOTO, endLabel);
+
+            // Else branch.
+            mv.visitLabel(elseLabel);
+            if (ifNode.getElseBranch() != null) {
+                generateStatement(mv, ifNode.getElseBranch(), ctx);
+            }
+
+            // End of if.
+            mv.visitLabel(endLabel);
+            return;
+        }
+
+        // While loop.
+        if (stmt instanceof WhileNode whileNode) {
+            Label startLabel = new Label();
+            Label endLabel = new Label();
+
+            // Start of loop condition.
+            mv.visitLabel(startLabel);
+
+            // If condition is false, leave loop.
+            generateConditionJump(mv, whileNode.getCondition(), ctx, false, endLabel);
+
+            // Loop body.
+            generateStatement(mv, whileNode.getBody(), ctx);
+
+            // Go back to condition.
+            mv.visitJumpInsn(GOTO, startLabel);
+
+            // End of loop.
+            mv.visitLabel(endLabel);
+            return;
+        }
+
+        // Nested block.
+        if (stmt instanceof BlockNode block) {
+            generateBlock(mv, block, ctx);
+            return;
+        }
+
         throw new RuntimeException(
                 "Step 5 code generation not implemented yet for statement: "
                         + stmt.getClass().getSimpleName()
@@ -265,6 +335,16 @@ public class CodeGenerator {
     private void generateBinaryExpr(MethodVisitor mv, BinaryExprNode bin, CodeGenContext ctx) {
         String type = inferExprType(bin.getLeft(), ctx);
         String op = bin.getOperator();
+
+        if (isComparisonOperator(op)) {
+            generateComparisonExpr(mv, bin, ctx);
+            return;
+        }
+
+        if ("&&".equals(op) || "||".equals(op)) {
+            generateLogicalExpr(mv, bin, ctx);
+            return;
+        }
 
         // Generate left operand first.
         generateExpr(mv, bin.getLeft(), ctx);
@@ -459,7 +539,8 @@ public class CodeGenerator {
         if (expr instanceof BinaryExprNode bin) {
             return switch (bin.getOperator()) {
                 case "+", "-", "*", "/", "%" -> inferExprType(bin.getLeft(), ctx);
-                default -> throw new RuntimeException("Step 5 cannot infer binary operator type: " + bin.getOperator());
+                case "==", "=/=", "<", ">", "<=", ">=", "&&", "||", "->" -> "BOOL";
+                default -> throw new RuntimeException("Cannot infer binary operator type: " + bin.getOperator());
             };
         }
 
@@ -491,5 +572,137 @@ public class CodeGenerator {
             case "VOID" -> "V";
             default -> "L" + type + ";";
         };
+    }
+
+    private boolean isComparisonOperator(String op) {
+        return "==".equals(op)
+                || "=/=".equals(op)
+                || "<".equals(op)
+                || ">".equals(op)
+                || "<=".equals(op)
+                || ">=".equals(op)
+                || "->".equals(op);
+    }
+
+    // Generate a condition as a real boolean value on stack: 0 or 1.
+    private void generateComparisonExpr(MethodVisitor mv, BinaryExprNode bin, CodeGenContext ctx) {
+        Label trueLabel = new Label();
+        Label endLabel = new Label();
+
+        generateConditionJump(mv, bin, ctx, true, trueLabel);
+
+        mv.visitInsn(ICONST_0);
+        mv.visitJumpInsn(GOTO, endLabel);
+
+        mv.visitLabel(trueLabel);
+        mv.visitInsn(ICONST_1);
+
+        mv.visitLabel(endLabel);
+    }
+
+    // Generate && and || as boolean values on stack.
+    private void generateLogicalExpr(MethodVisitor mv, BinaryExprNode bin, CodeGenContext ctx) {
+        Label trueLabel = new Label();
+        Label falseLabel = new Label();
+        Label endLabel = new Label();
+
+        generateConditionJump(mv, bin, ctx, true, trueLabel);
+
+        mv.visitLabel(falseLabel);
+        mv.visitInsn(ICONST_0);
+        mv.visitJumpInsn(GOTO, endLabel);
+
+        mv.visitLabel(trueLabel);
+        mv.visitInsn(ICONST_1);
+
+        mv.visitLabel(endLabel);
+    }
+
+    // Jump depending on whether condition should be true or false.
+    private void generateConditionJump(MethodVisitor mv, ExprNode condition, CodeGenContext ctx, boolean jumpOnTrue, Label target) {
+        if (condition instanceof BinaryExprNode bin) {
+            String op = bin.getOperator();
+
+            if ("&&".equals(op)) {
+                if (jumpOnTrue) {
+                    Label skip = new Label();
+                    generateConditionJump(mv, bin.getLeft(), ctx, false, skip);
+                    generateConditionJump(mv, bin.getRight(), ctx, true, target);
+                    mv.visitLabel(skip);
+                } else {
+                    generateConditionJump(mv, bin.getLeft(), ctx, false, target);
+                    generateConditionJump(mv, bin.getRight(), ctx, false, target);
+                }
+                return;
+            }
+
+            if ("||".equals(op)) {
+                if (jumpOnTrue) {
+                    generateConditionJump(mv, bin.getLeft(), ctx, true, target);
+                    generateConditionJump(mv, bin.getRight(), ctx, true, target);
+                } else {
+                    Label skip = new Label();
+                    generateConditionJump(mv, bin.getLeft(), ctx, true, skip);
+                    generateConditionJump(mv, bin.getRight(), ctx, false, target);
+                    mv.visitLabel(skip);
+                }
+                return;
+            }
+
+            if (isComparisonOperator(op)) {
+                generateComparisonJump(mv, bin, ctx, jumpOnTrue, target);
+                return;
+            }
+        }
+
+        // General boolean expression: generate value, then compare with 0.
+        generateExpr(mv, condition, ctx);
+        mv.visitJumpInsn(jumpOnTrue ? IFNE : IFEQ, target);
+    }
+
+    private void generateComparisonJump(MethodVisitor mv, BinaryExprNode bin, CodeGenContext ctx, boolean jumpOnTrue, Label target) {
+        String leftType = inferExprType(bin.getLeft(), ctx);
+        String op = bin.getOperator();
+
+        // Special case for your range operator.
+        // For now, we interpret "a -> b" as true, because your current parser represents it as a boolean condition
+        // but does not connect it automatically to the loop variable yet.
+        if ("->".equals(op)) {
+            mv.visitInsn(ICONST_1);
+            mv.visitJumpInsn(jumpOnTrue ? IFNE : IFEQ, target);
+            return;
+        }
+
+        generateExpr(mv, bin.getLeft(), ctx);
+        generateExpr(mv, bin.getRight(), ctx);
+
+        if ("FLOAT".equals(leftType)) {
+            mv.visitInsn(FCMPL);
+
+            int opcode = switch (op) {
+                case "==" -> jumpOnTrue ? IFEQ : IFNE;
+                case "=/=" -> jumpOnTrue ? IFNE : IFEQ;
+                case "<" -> jumpOnTrue ? IFLT : IFGE;
+                case ">" -> jumpOnTrue ? IFGT : IFLE;
+                case "<=" -> jumpOnTrue ? IFLE : IFGT;
+                case ">=" -> jumpOnTrue ? IFGE : IFLT;
+                default -> throw new RuntimeException("Unsupported float comparison: " + op);
+            };
+
+            mv.visitJumpInsn(opcode, target);
+            return;
+        }
+
+        int opcode = switch (op) {
+            case "==" -> jumpOnTrue ? IF_ICMPEQ : IF_ICMPNE;
+            case "=/=" -> jumpOnTrue ? IF_ICMPNE : IF_ICMPEQ;
+            case "<" -> jumpOnTrue ? IF_ICMPLT : IF_ICMPGE;
+            case ">" -> jumpOnTrue ? IF_ICMPGT : IF_ICMPLE;
+            case "<=" -> jumpOnTrue ? IF_ICMPLE : IF_ICMPGT;
+            case ">=" -> jumpOnTrue ? IF_ICMPGE : IF_ICMPLT;
+            default -> throw new RuntimeException("Unsupported int comparison: " + op);
+        };
+
+        mv.visitJumpInsn(opcode, target);
     }
 }
