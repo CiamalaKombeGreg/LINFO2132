@@ -2,6 +2,8 @@ package compiler.Generation;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
@@ -83,6 +85,7 @@ import compiler.Parser.WhileNode;
 public class CodeGenerator {
 
     private final String className;
+    private final Map<String, FunctionDefNode> functions = new HashMap<>();
 
     public CodeGenerator(String className) {
         this.className = className;
@@ -106,6 +109,13 @@ public class CodeGenerator {
 
         // Every JVM class needs a constructor.
         generateConstructor(cw);
+
+        // Register all functions before generation.
+        for (ASTNode node : program.getElements()) {
+            if (node instanceof FunctionDefNode fn) {
+                functions.put(fn.getName(), fn);
+            }
+        }
 
         // Generate all functions.
         for (ASTNode node : program.getElements()) {
@@ -686,8 +696,19 @@ public class CodeGenerator {
                     case "read_FLOAT" -> "FLOAT";
                     case "read_STRING" -> "STRING";
 
-                    // Temporary default for user functions.
-                    default -> "INT";
+                    default -> {
+                        FunctionDefNode fn = functions.get(name);
+
+                        if (fn == null) {
+                            throw new RuntimeException("Unknown function: " + name);
+                        }
+
+                        if (fn.getReturnType() == null) {
+                            yield "VOID";
+                        }
+
+                        yield normalizeType(fn.getReturnType());
+                    }
                 };
             }
         }
@@ -724,6 +745,12 @@ public class CodeGenerator {
 
     // Infer descriptor for a function call.
     private String inferCallDescriptor(CallNode call, CodeGenContext ctx) {
+        if (!(call.getCallee() instanceof IdentifierNode id)) {
+            throw new RuntimeException("Only simple function calls are supported for now");
+        }
+
+        String name = id.getName();
+
         StringBuilder sb = new StringBuilder();
 
         sb.append("(");
@@ -735,22 +762,40 @@ public class CodeGenerator {
         sb.append(")");
 
         // Built-ins.
-        if (call.getCallee() instanceof IdentifierNode id) {
-            String name = id.getName();
+        switch (name) {
+            case "read_INT" -> {
+                return "()I";
+            }
 
-            switch (name) {
-                case "read_INT" -> {
-                    return "()I";
+            case "read_FLOAT" -> {
+                return "()F";
+            }
+
+            case "read_STRING" -> {
+                return "()Ljava/lang/String;";
+            }
+
+            case "println" -> {
+                if (call.getArgs().isEmpty()) {
+                    return "()V";
                 }
-                case "println" -> {
-                    return "(Ljava/lang/String;)V";
-                }
+
+                String argType = inferExprType(call.getArgs().get(0), ctx);
+                return "(" + descriptor(argType) + ")V";
             }
         }
 
-        // For now assume INT return for unknown user functions.
-        // We will improve this later with a function table.
-        sb.append("I");
+        FunctionDefNode fn = functions.get(name);
+
+        if (fn == null) {
+            throw new RuntimeException("Unknown function: " + name);
+        }
+
+        if (fn.getReturnType() == null) {
+            sb.append("V");
+        } else {
+            sb.append(descriptor(fn.getReturnType()));
+        }
 
         return sb.toString();
     }
