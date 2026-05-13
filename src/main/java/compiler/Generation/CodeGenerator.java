@@ -64,6 +64,7 @@ import compiler.Parser.BlockNode;
 import compiler.Parser.CallNode;
 import compiler.Parser.ExprNode;
 import compiler.Parser.ExprStatementNode;
+import compiler.Parser.ForNode;
 import compiler.Parser.FunctionDefNode;
 import compiler.Parser.IdentifierNode;
 import compiler.Parser.IfNode;
@@ -283,6 +284,55 @@ public class CodeGenerator {
         // Nested block.
         if (stmt instanceof BlockNode block) {
             generateBlock(mv, block, ctx);
+            return;
+        }
+
+        // For loop.
+        if (stmt instanceof ForNode forNode) {
+            Label startLabel = new Label();
+            Label endLabel = new Label();
+
+            // Generate init part.
+            if (forNode.getInit() instanceof StatementNode initStmt) {
+                generateStatement(mv, initStmt, ctx);
+            } else if (forNode.getInit() instanceof ExprNode initExpr) {
+                generateExpr(mv, initExpr, ctx);
+
+                String initType = inferExprType(initExpr, ctx);
+                if (!"VOID".equals(initType)) {
+                    mv.visitInsn(POP);
+                }
+            }
+
+            if (forNode.getCondition() instanceof BinaryExprNode bin && "->".equals(bin.getOperator())) {
+                LocalVar loopVar = getForLoopVariable(forNode, ctx);
+                generateExpr(mv, bin.getLeft(), ctx);
+                storeLocal(mv, loopVar);
+            }
+
+            // Start of loop condition.
+            mv.visitLabel(startLabel);
+
+            // If condition is false, exit loop.
+            if (forNode.getCondition() != null) {
+                generateForConditionJump(mv, forNode, ctx, endLabel);
+            }
+
+            // Body.
+            generateStatement(mv, forNode.getBody(), ctx);
+
+            // Update part.
+            if (forNode.getUpdate() instanceof StatementNode updateStmt) {
+                generateStatement(mv, updateStmt, ctx);
+            } else if (forNode.getUpdate() instanceof ExprNode updateExpr) {
+                generateForUpdate(mv, forNode, updateExpr, ctx);
+            }
+
+            // Go back to condition.
+            mv.visitJumpInsn(GOTO, startLabel);
+
+            // End of loop.
+            mv.visitLabel(endLabel);
             return;
         }
 
@@ -664,9 +714,7 @@ public class CodeGenerator {
         String leftType = inferExprType(bin.getLeft(), ctx);
         String op = bin.getOperator();
 
-        // Special case for your range operator.
-        // For now, we interpret "a -> b" as true, because your current parser represents it as a boolean condition
-        // but does not connect it automatically to the loop variable yet.
+        // Special case for the range operator. For now, we interpret "a -> b" as true, because the current parser represents it as a boolean condition, but does not connect it automatically to the loop variable yet.
         if ("->".equals(op)) {
             mv.visitInsn(ICONST_1);
             mv.visitJumpInsn(jumpOnTrue ? IFNE : IFEQ, target);
@@ -704,5 +752,68 @@ public class CodeGenerator {
         };
 
         mv.visitJumpInsn(opcode, target);
+    }
+
+    private void generateForConditionJump(MethodVisitor mv, ForNode forNode, CodeGenContext ctx, Label endLabel) {
+        ExprNode condition = forNode.getCondition();
+
+        // Special handling for: for (i; start -> end; i+1)
+        if (condition instanceof BinaryExprNode bin && "->".equals(bin.getOperator())) {
+            LocalVar loopVar = getForLoopVariable(forNode, ctx);
+
+            generateExpr(mv, bin.getRight(), ctx); // upper bound
+            loadLocal(mv, loopVar); // current i
+
+            // if upperBound < i, end loop
+            mv.visitJumpInsn(IF_ICMPLT, endLabel);
+            return;
+        }
+
+        generateConditionJump(mv, condition, ctx, false, endLabel);
+    }
+
+    private void generateForUpdate(MethodVisitor mv, ForNode forNode, ExprNode updateExpr, CodeGenContext ctx) {
+        LocalVar loopVar = getForLoopVariable(forNode, ctx);
+
+        // Special handling for update like: i + 1
+        if (updateExpr instanceof BinaryExprNode bin
+                && bin.getLeft() instanceof IdentifierNode id
+                && id.getName().equals(loopVar.getName())
+                && "+".equals(bin.getOperator())) {
+
+            // Generate i + right.
+            generateExpr(mv, bin, ctx);
+
+            // Store result back into i.
+            storeLocal(mv, loopVar);
+            return;
+        }
+
+        // Generic expression update.
+        generateExpr(mv, updateExpr, ctx);
+        String updateType = inferExprType(updateExpr, ctx);
+        if (!"VOID".equals(updateType)) {
+            mv.visitInsn(POP);
+        }
+    }
+
+    private LocalVar getForLoopVariable(ForNode forNode, CodeGenContext ctx) {
+        if (forNode.getInit() instanceof IdentifierNode id) {
+            LocalVar local = ctx.resolveLocal(id.getName());
+            if (local == null) {
+                throw new RuntimeException("Unknown for-loop variable: " + id.getName());
+            }
+            return local;
+        }
+
+        if (forNode.getInit() instanceof VarDeclNode varDecl) {
+            LocalVar local = ctx.resolveLocal(varDecl.getName());
+            if (local == null) {
+                throw new RuntimeException("Unknown for-loop variable: " + varDecl.getName());
+            }
+            return local;
+        }
+
+        throw new RuntimeException("For loop needs an identifier or variable declaration as init");
     }
 }
