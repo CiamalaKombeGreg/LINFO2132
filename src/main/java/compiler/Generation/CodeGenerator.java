@@ -11,6 +11,7 @@ import static org.objectweb.asm.Opcodes.ACC_STATIC;
 import static org.objectweb.asm.Opcodes.ACC_SUPER;
 import static org.objectweb.asm.Opcodes.ACONST_NULL;
 import static org.objectweb.asm.Opcodes.ALOAD;
+import static org.objectweb.asm.Opcodes.ARETURN;
 import static org.objectweb.asm.Opcodes.ASTORE;
 import static org.objectweb.asm.Opcodes.BIPUSH;
 import static org.objectweb.asm.Opcodes.FADD;
@@ -20,6 +21,7 @@ import static org.objectweb.asm.Opcodes.FDIV;
 import static org.objectweb.asm.Opcodes.FLOAD;
 import static org.objectweb.asm.Opcodes.FMUL;
 import static org.objectweb.asm.Opcodes.FREM;
+import static org.objectweb.asm.Opcodes.FRETURN;
 import static org.objectweb.asm.Opcodes.FSTORE;
 import static org.objectweb.asm.Opcodes.FSUB;
 import static org.objectweb.asm.Opcodes.GETSTATIC;
@@ -48,8 +50,10 @@ import static org.objectweb.asm.Opcodes.IF_ICMPNE;
 import static org.objectweb.asm.Opcodes.ILOAD;
 import static org.objectweb.asm.Opcodes.IMUL;
 import static org.objectweb.asm.Opcodes.INVOKESPECIAL;
+import static org.objectweb.asm.Opcodes.INVOKESTATIC;
 import static org.objectweb.asm.Opcodes.INVOKEVIRTUAL;
 import static org.objectweb.asm.Opcodes.IREM;
+import static org.objectweb.asm.Opcodes.IRETURN;
 import static org.objectweb.asm.Opcodes.ISTORE;
 import static org.objectweb.asm.Opcodes.ISUB;
 import static org.objectweb.asm.Opcodes.POP;
@@ -69,7 +73,9 @@ import compiler.Parser.FunctionDefNode;
 import compiler.Parser.IdentifierNode;
 import compiler.Parser.IfNode;
 import compiler.Parser.LiteralNode;
+import compiler.Parser.ParamNode;
 import compiler.Parser.ProgramNode;
+import compiler.Parser.ReturnNode;
 import compiler.Parser.StatementNode;
 import compiler.Parser.VarDeclNode;
 import compiler.Parser.WhileNode;
@@ -101,10 +107,10 @@ public class CodeGenerator {
         // Every JVM class needs a constructor.
         generateConstructor(cw);
 
-        // Search all top-level nodes. If we find a function named "main", we generate the JVM main method.
+        // Generate all functions.
         for (ASTNode node : program.getElements()) {
-            if (node instanceof FunctionDefNode fn && "main".equals(fn.getName())) {
-                generateMain(cw, fn);
+            if (node instanceof FunctionDefNode fn) {
+                generateFunction(cw, fn);
             }
         }
 
@@ -170,6 +176,48 @@ public class CodeGenerator {
 
         // End main function.
         mv.visitInsn(RETURN);
+
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // Generate a user-defined function.
+    private void generateFunction(ClassWriter cw, FunctionDefNode fn) {
+
+        // JVM main has a special signature.
+        if ("main".equals(fn.getName())) {
+            generateMain(cw, fn);
+            return;
+        }
+
+        MethodVisitor mv = cw.visitMethod(
+                ACC_PUBLIC | ACC_STATIC,
+                fn.getName(),
+                methodDescriptor(fn),
+                null,
+                null
+        );
+
+        mv.visitCode();
+
+        // Static methods start at slot 0.
+        CodeGenContext ctx = new CodeGenContext(0);
+
+        // Register parameters as local variables.
+        for (ParamNode param : fn.getParams()) {
+            ctx.declareLocal(
+                    param.getName(),
+                    normalizeType(param.getType())
+            );
+        }
+
+        // Generate function body.
+        generateBlock(mv, fn.getBody(), ctx);
+
+        // Safety return for VOID functions.
+        if (fn.getReturnType() == null || "VOID".equals(fn.getReturnType())) {
+            mv.visitInsn(RETURN);
+        }
 
         mv.visitMaxs(0, 0);
         mv.visitEnd();
@@ -336,6 +384,29 @@ public class CodeGenerator {
             return;
         }
 
+        // Return statement.
+        if (stmt instanceof ReturnNode ret) {
+
+            // return;
+            if (ret.getExpr() == null) {
+                mv.visitInsn(RETURN);
+                return;
+            }
+
+            // Generate returned value.
+            generateExpr(mv, ret.getExpr(), ctx);
+
+            String type = inferExprType(ret.getExpr(), ctx);
+
+            switch (type) {
+                case "INT", "BOOL" -> mv.visitInsn(IRETURN);
+                case "FLOAT" -> mv.visitInsn(FRETURN);
+                default -> mv.visitInsn(ARETURN);
+            }
+
+            return;
+        }
+
         throw new RuntimeException(
                 "Step 5 code generation not implemented yet for statement: "
                         + stmt.getClass().getSimpleName()
@@ -487,9 +558,20 @@ public class CodeGenerator {
             throw new RuntimeException("println accepts zero or one argument");
         }
 
-        throw new RuntimeException(
-                "Unknown function in Step 5 code generation: " + name
+        // User-defined function call.
+        for (ExprNode arg : call.getArgs()) {
+            generateExpr(mv, arg, ctx);
+        }
+
+        mv.visitMethodInsn(
+                INVOKESTATIC,
+                className,
+                name,
+                inferCallDescriptor(call, ctx),
+                false
         );
+
+        return;
     }
 
     // Generate literal values.
@@ -597,9 +679,16 @@ public class CodeGenerator {
         if (expr instanceof CallNode call) {
             if (call.getCallee() instanceof IdentifierNode id) {
                 String name = id.getName();
-                if ("println".equals(name)) {
-                    return "VOID";
-                }
+
+                return switch (name) {
+                    case "println" -> "VOID";
+                    case "read_INT" -> "INT";
+                    case "read_FLOAT" -> "FLOAT";
+                    case "read_STRING" -> "STRING";
+
+                    // Temporary default for user functions.
+                    default -> "INT";
+                };
             }
         }
 
@@ -610,6 +699,60 @@ public class CodeGenerator {
     private String normalizeType(String type) {
         if ("BOOLEAN".equals(type)) return "BOOL";
         return type;
+    }
+
+    // Build JVM descriptor for a function.
+    private String methodDescriptor(FunctionDefNode fn) {
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("(");
+
+        for (ParamNode param : fn.getParams()) {
+            sb.append(descriptor(param.getType()));
+        }
+
+        sb.append(")");
+
+        if (fn.getReturnType() == null) {
+            sb.append("V");
+        } else {
+            sb.append(descriptor(fn.getReturnType()));
+        }
+
+        return sb.toString();
+    }
+
+    // Infer descriptor for a function call.
+    private String inferCallDescriptor(CallNode call, CodeGenContext ctx) {
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("(");
+
+        for (ExprNode arg : call.getArgs()) {
+            sb.append(descriptor(inferExprType(arg, ctx)));
+        }
+
+        sb.append(")");
+
+        // Built-ins.
+        if (call.getCallee() instanceof IdentifierNode id) {
+            String name = id.getName();
+
+            switch (name) {
+                case "read_INT" -> {
+                    return "()I";
+                }
+                case "println" -> {
+                    return "(Ljava/lang/String;)V";
+                }
+            }
+        }
+
+        // For now assume INT return for unknown user functions.
+        // We will improve this later with a function table.
+        sb.append("I");
+
+        return sb.toString();
     }
 
     // Convert our language type names to JVM descriptors.
