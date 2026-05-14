@@ -1,5 +1,6 @@
 package compiler.Generation;
 
+import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.HashMap;
@@ -64,6 +65,7 @@ import static org.objectweb.asm.Opcodes.ISTORE;
 import static org.objectweb.asm.Opcodes.ISUB;
 import static org.objectweb.asm.Opcodes.NEWARRAY;
 import static org.objectweb.asm.Opcodes.POP;
+import static org.objectweb.asm.Opcodes.PUTFIELD;
 import static org.objectweb.asm.Opcodes.RETURN;
 import static org.objectweb.asm.Opcodes.SIPUSH;
 import static org.objectweb.asm.Opcodes.T_INT;
@@ -74,8 +76,10 @@ import compiler.Parser.AssignmentNode;
 import compiler.Parser.BinaryExprNode;
 import compiler.Parser.BlockNode;
 import compiler.Parser.CallNode;
+import compiler.Parser.CollDeclNode;
 import compiler.Parser.ExprNode;
 import compiler.Parser.ExprStatementNode;
+import compiler.Parser.FieldNode;
 import compiler.Parser.ForNode;
 import compiler.Parser.FunctionDefNode;
 import compiler.Parser.IdentifierNode;
@@ -116,6 +120,13 @@ public class CodeGenerator {
 
         // Every JVM class needs a constructor.
         generateConstructor(cw);
+
+        // Generate collection classes.
+        for (ASTNode node : program.getElements()) {
+            if (node instanceof CollDeclNode coll) {
+                generateCollectionClass(coll, outputPath);
+            }
+        }
 
         // Register all functions before generation.
         for (ASTNode node : program.getElements()) {
@@ -687,6 +698,49 @@ public class CodeGenerator {
         return;
     }
 
+    // Generate a JVM class for a collection.
+    private void generateCollectionClass(CollDeclNode coll, String outputPath) throws IOException {
+
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+
+        cw.visit(
+                V17,
+                ACC_PUBLIC | ACC_SUPER,
+                coll.getName(),
+                null,
+                "java/lang/Object",
+                null
+        );
+
+        // Generate fields.
+        for (FieldNode field : coll.getFields()) {
+
+            cw.visitField(
+                    ACC_PUBLIC,
+                    field.getName(),
+                    descriptor(field.getType()),
+                    null,
+                    null
+            ).visitEnd();
+        }
+
+        generateCollectionConstructor(cw, coll);
+
+        cw.visitEnd();
+
+        File outFile = new File(outputPath).getParentFile();
+
+        if (outFile == null) {
+            outFile = new File(".");
+        }
+
+        try (FileOutputStream out = new FileOutputStream(
+                new File(outFile, coll.getName() + ".class"))) {
+
+            out.write(cw.toByteArray());
+        }
+    }
+
     // Generate literal values.
     private void generateLiteral(MethodVisitor mv, LiteralNode literal) {
 
@@ -1119,5 +1173,68 @@ public class CodeGenerator {
         }
 
         throw new RuntimeException("For loop needs an identifier or variable declaration as init");
+    }
+
+    // Generate collection constructor.
+    private void generateCollectionConstructor(ClassWriter cw, CollDeclNode coll) {
+
+        StringBuilder desc = new StringBuilder();
+
+        desc.append("(");
+
+        for (FieldNode field : coll.getFields()) {
+            desc.append(descriptor(field.getType()));
+        }
+
+        desc.append(")V");
+
+        MethodVisitor mv = cw.visitMethod(
+                ACC_PUBLIC,
+                "<init>",
+                desc.toString(),
+                null,
+                null
+        );
+
+        mv.visitCode();
+
+        // Call Object constructor.
+        mv.visitVarInsn(ALOAD, 0);
+
+        mv.visitMethodInsn(
+                INVOKESPECIAL,
+                "java/lang/Object",
+                "<init>",
+                "()V",
+                false
+        );
+
+        int slot = 1;
+
+        // Assign constructor parameters into fields.
+        for (FieldNode field : coll.getFields()) {
+
+            mv.visitVarInsn(ALOAD, 0);
+
+            switch (normalizeType(field.getType())) {
+                case "INT", "BOOL" -> mv.visitVarInsn(ILOAD, slot);
+                case "FLOAT" -> mv.visitVarInsn(FLOAD, slot);
+                default -> mv.visitVarInsn(ALOAD, slot);
+            }
+
+            mv.visitFieldInsn(
+                    PUTFIELD,
+                    coll.getName(),
+                    field.getName(),
+                    descriptor(field.getType())
+            );
+
+            slot++;
+        }
+
+        mv.visitInsn(RETURN);
+
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 }
