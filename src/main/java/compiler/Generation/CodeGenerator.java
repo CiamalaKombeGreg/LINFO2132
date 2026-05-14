@@ -8,6 +8,8 @@ import java.util.Map;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
+import static org.objectweb.asm.Opcodes.AALOAD;
+import static org.objectweb.asm.Opcodes.AASTORE;
 import static org.objectweb.asm.Opcodes.ACC_PUBLIC;
 import static org.objectweb.asm.Opcodes.ACC_STATIC;
 import static org.objectweb.asm.Opcodes.ACC_SUPER;
@@ -29,6 +31,8 @@ import static org.objectweb.asm.Opcodes.FSUB;
 import static org.objectweb.asm.Opcodes.GETSTATIC;
 import static org.objectweb.asm.Opcodes.GOTO;
 import static org.objectweb.asm.Opcodes.IADD;
+import static org.objectweb.asm.Opcodes.IALOAD;
+import static org.objectweb.asm.Opcodes.IASTORE;
 import static org.objectweb.asm.Opcodes.ICONST_0;
 import static org.objectweb.asm.Opcodes.ICONST_1;
 import static org.objectweb.asm.Opcodes.ICONST_2;
@@ -58,9 +62,11 @@ import static org.objectweb.asm.Opcodes.IREM;
 import static org.objectweb.asm.Opcodes.IRETURN;
 import static org.objectweb.asm.Opcodes.ISTORE;
 import static org.objectweb.asm.Opcodes.ISUB;
+import static org.objectweb.asm.Opcodes.NEWARRAY;
 import static org.objectweb.asm.Opcodes.POP;
 import static org.objectweb.asm.Opcodes.RETURN;
 import static org.objectweb.asm.Opcodes.SIPUSH;
+import static org.objectweb.asm.Opcodes.T_INT;
 import static org.objectweb.asm.Opcodes.V17;
 
 import compiler.Parser.ASTNode;
@@ -74,6 +80,7 @@ import compiler.Parser.ForNode;
 import compiler.Parser.FunctionDefNode;
 import compiler.Parser.IdentifierNode;
 import compiler.Parser.IfNode;
+import compiler.Parser.IndexAccessNode;
 import compiler.Parser.LiteralNode;
 import compiler.Parser.ParamNode;
 import compiler.Parser.ProgramNode;
@@ -260,23 +267,39 @@ public class CodeGenerator {
             return;
         }
 
-        // Assignment, for example: x = x + 1;
+        // Assignment, for example: x = x + 1; or a[0] = 10;
         if (stmt instanceof AssignmentNode assignment) {
-            if (!(assignment.getTarget() instanceof IdentifierNode id)) {
-                throw new RuntimeException("Step 5 only supports assignment to identifiers");
+
+            if (assignment.getTarget() instanceof IndexAccessNode index) {
+                generateExpr(mv, index.getTarget(), ctx);
+                generateExpr(mv, index.getIndex(), ctx);
+                generateExpr(mv, assignment.getValue(), ctx);
+
+                String targetType = inferExprType(index.getTarget(), ctx);
+
+                if ("ARRAY[INT]".equals(targetType)) {
+                    mv.visitInsn(IASTORE);
+                    return;
+                }
+
+                mv.visitInsn(AASTORE);
+                return;
             }
 
-            LocalVar local = ctx.resolveLocal(id.getName());
-            if (local == null) {
-                throw new RuntimeException("Unknown local variable: " + id.getName());
+            if (assignment.getTarget() instanceof IdentifierNode id) {
+                LocalVar local = ctx.resolveLocal(id.getName());
+
+                if (local == null) {
+                    throw new RuntimeException("Unknown local variable: " + id.getName());
+                }
+
+                generateExpr(mv, assignment.getValue(), ctx);
+                storeLocal(mv, local);
+                return;
             }
 
-            // Generate the right-hand side value.
-            generateExpr(mv, assignment.getValue(), ctx);
-
-            // Store it into the variable target.
-            storeLocal(mv, local);
-            return;
+            throw new RuntimeException("Unsupported assignment target: "
+                    + assignment.getTarget().getClass().getSimpleName());
         }
 
         // Expression statement, for example: println(x);
@@ -417,6 +440,50 @@ public class CodeGenerator {
             return;
         }
 
+        // Assignment.
+        if (stmt instanceof AssignmentNode assign) {
+
+            // Array element assignment.
+            if (assign.getTarget() instanceof IndexAccessNode index) {
+
+                // Load array reference.
+                generateExpr(mv, index.getTarget(), ctx);
+
+                // Load index.
+                generateExpr(mv, index.getIndex(), ctx);
+
+                // Load assigned value.
+                generateExpr(mv, assign.getValue(), ctx);
+
+                String targetType = inferExprType(index.getTarget(), ctx);
+
+                if ("ARRAY[INT]".equals(targetType)) {
+                    mv.visitInsn(IASTORE);
+                    return;
+                }
+
+                mv.visitInsn(AASTORE);
+                return;
+            }
+
+            // Normal variable assignment.
+            if (assign.getTarget() instanceof IdentifierNode id) {
+
+                LocalVar local = ctx.resolveLocal(id.getName());
+
+                if (local == null) {
+                    throw new RuntimeException(
+                            "Unknown local variable: " + id.getName()
+                    );
+                }
+
+                generateExpr(mv, assign.getValue(), ctx);
+
+                storeLocal(mv, local);
+                return;
+            }
+        }
+
         throw new RuntimeException(
                 "Step 5 code generation not implemented yet for statement: "
                         + stmt.getClass().getSimpleName()
@@ -453,6 +520,26 @@ public class CodeGenerator {
         // Function call.
         if (expr instanceof CallNode call) {
             generateCall(mv, call, ctx);
+            return;
+        }
+
+        // Array indexing.
+        if (expr instanceof IndexAccessNode index) {
+
+            // Load array reference.
+            generateExpr(mv, index.getTarget(), ctx);
+
+            // Load index.
+            generateExpr(mv, index.getIndex(), ctx);
+
+            String targetType = inferExprType(index.getTarget(), ctx);
+
+            if ("ARRAY[INT]".equals(targetType)) {
+                mv.visitInsn(IALOAD);
+                return;
+            }
+
+            mv.visitInsn(AALOAD);
             return;
         }
 
@@ -520,6 +607,22 @@ public class CodeGenerator {
         }
 
         String name = id.getName();
+
+        // Array constructor: INT ARRAY [size]
+        if ("INT ARRAY".equals(name)) {
+
+            if (call.getArgs().size() != 1) {
+                throw new RuntimeException("INT ARRAY expects one size argument");
+            }
+
+            // Generate array size.
+            generateExpr(mv, call.getArgs().get(0), ctx);
+
+            // Create int array.
+            mv.visitIntInsn(NEWARRAY, T_INT);
+
+            return;
+        }
 
         // Handle println(...)
         if ("println".equals(name)) {
@@ -711,6 +814,19 @@ public class CodeGenerator {
                     }
                 };
             }
+        }
+
+        if (expr instanceof IndexAccessNode index) {
+
+            String targetType = inferExprType(index.getTarget(), ctx);
+
+            if (targetType.startsWith("ARRAY[")) {
+                return targetType.substring(6, targetType.length() - 1);
+            }
+
+            throw new RuntimeException(
+                    "Cannot index non-array type: " + targetType
+            );
         }
 
         throw new RuntimeException("Cannot infer expression type yet: " + expr.getClass().getSimpleName());
