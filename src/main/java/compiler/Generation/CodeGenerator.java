@@ -69,6 +69,7 @@ import static org.objectweb.asm.Opcodes.NEW;
 import static org.objectweb.asm.Opcodes.NEWARRAY;
 import static org.objectweb.asm.Opcodes.POP;
 import static org.objectweb.asm.Opcodes.PUTFIELD;
+import static org.objectweb.asm.Opcodes.PUTSTATIC;
 import static org.objectweb.asm.Opcodes.RETURN;
 import static org.objectweb.asm.Opcodes.SIPUSH;
 import static org.objectweb.asm.Opcodes.T_INT;
@@ -102,6 +103,7 @@ public class CodeGenerator {
     private final String className;
     private final Map<String, FunctionDefNode> functions = new HashMap<>();
     private final Map<String, CollDeclNode> collections = new HashMap<>();
+    private final Map<String, VarDeclNode> globals = new HashMap<>();
 
     public CodeGenerator(String className) {
         this.className = className;
@@ -126,11 +128,31 @@ public class CodeGenerator {
         // Every JVM class needs a constructor.
         generateConstructor(cw);
 
+        // Generate global variables as static fields.
+        for (ASTNode node : program.getElements()) {
+            if (node instanceof VarDeclNode global) {
+                cw.visitField(
+                        ACC_PUBLIC | ACC_STATIC,
+                        global.getName(),
+                        descriptor(global.getType()),
+                        null,
+                        null
+                ).visitEnd();
+            }
+        }
+
         // Generate collection classes.
         for (ASTNode node : program.getElements()) {
             if (node instanceof CollDeclNode coll) {
                 collections.put(coll.getName(), coll);
                 generateCollectionClass(coll, outputPath);
+            }
+        }
+
+        // Register global variables.
+        for (ASTNode node : program.getElements()) {
+            if (node instanceof VarDeclNode global) {
+                globals.put(global.getName(), global);
             }
         }
 
@@ -147,6 +169,8 @@ public class CodeGenerator {
                 generateFunction(cw, fn);
             }
         }
+
+        generateGlobalInitializer(cw);
 
         cw.visitEnd();
 
@@ -328,13 +352,26 @@ public class CodeGenerator {
             if (assignment.getTarget() instanceof IdentifierNode id) {
                 LocalVar local = ctx.resolveLocal(id.getName());
 
-                if (local == null) {
-                    throw new RuntimeException("Unknown local variable: " + id.getName());
+                generateExpr(mv, assignment.getValue(), ctx);
+
+                if (local != null) {
+                    storeLocal(mv, local);
+                    return;
                 }
 
-                generateExpr(mv, assignment.getValue(), ctx);
-                storeLocal(mv, local);
-                return;
+                VarDeclNode global = globals.get(id.getName());
+
+                if (global != null) {
+                    mv.visitFieldInsn(
+                            PUTSTATIC,
+                            className,
+                            global.getName(),
+                            descriptor(global.getType())
+                    );
+                    return;
+                }
+
+                throw new RuntimeException("Unknown variable: " + id.getName());
             }
 
             throw new RuntimeException("Unsupported assignment target: "
@@ -541,13 +578,25 @@ public class CodeGenerator {
         // Variable access.
         if (expr instanceof IdentifierNode id) {
             LocalVar local = ctx.resolveLocal(id.getName());
-            if (local == null) {
-                throw new RuntimeException("Unknown local variable: " + id.getName());
+
+            if (local != null) {
+                loadLocal(mv, local);
+                return;
             }
 
-            // Push the variable value onto the JVM stack.
-            loadLocal(mv, local);
-            return;
+            VarDeclNode global = globals.get(id.getName());
+
+            if (global != null) {
+                mv.visitFieldInsn(
+                        GETSTATIC,
+                        className,
+                        global.getName(),
+                        descriptor(global.getType())
+                );
+                return;
+            }
+
+            throw new RuntimeException("Unknown variable: " + id.getName());
         }
 
         // Binary expression, for example: x + y.
@@ -716,6 +765,42 @@ public class CodeGenerator {
             // Create int array.
             mv.visitIntInsn(NEWARRAY, T_INT);
 
+            return;
+        }
+
+        if ("read_INT".equals(name)) {
+            generateScanner(mv);
+            mv.visitMethodInsn(
+                    INVOKEVIRTUAL,
+                    "java/util/Scanner",
+                    "nextInt",
+                    "()I",
+                    false
+            );
+            return;
+        }
+
+        if ("read_FLOAT".equals(name)) {
+            generateScanner(mv);
+            mv.visitMethodInsn(
+                    INVOKEVIRTUAL,
+                    "java/util/Scanner",
+                    "nextFloat",
+                    "()F",
+                    false
+            );
+            return;
+        }
+
+        if ("read_STRING".equals(name)) {
+            generateScanner(mv);
+            mv.visitMethodInsn(
+                    INVOKEVIRTUAL,
+                    "java/util/Scanner",
+                    "nextLine",
+                    "()Ljava/lang/String;",
+                    false
+            );
             return;
         }
 
@@ -913,10 +998,18 @@ public class CodeGenerator {
 
         if (expr instanceof IdentifierNode id) {
             LocalVar local = ctx.resolveLocal(id.getName());
-            if (local == null) {
-                throw new RuntimeException("Unknown local variable: " + id.getName());
+
+            if (local != null) {
+                return local.getType();
             }
-            return local.getType();
+
+            VarDeclNode global = globals.get(id.getName());
+
+            if (global != null) {
+                return normalizeType(global.getType());
+            }
+
+            throw new RuntimeException("Unknown variable: " + id.getName());
         }
 
         if (expr instanceof BinaryExprNode bin) {
@@ -1353,5 +1446,58 @@ public class CodeGenerator {
 
         mv.visitMaxs(0, 0);
         mv.visitEnd();
+    }
+
+    // Generate static global initialisation.
+    private void generateGlobalInitializer(ClassWriter cw) {
+        MethodVisitor mv = cw.visitMethod(
+                ACC_STATIC,
+                "<clinit>",
+                "()V",
+                null,
+                null
+        );
+
+        mv.visitCode();
+
+        CodeGenContext ctx = new CodeGenContext(0);
+
+        for (VarDeclNode global : globals.values()) {
+            if (global.getInitializer() != null) {
+                generateExpr(mv, global.getInitializer(), ctx);
+            } else {
+                generateDefaultValue(mv, normalizeType(global.getType()));
+            }
+
+            mv.visitFieldInsn(
+                    PUTSTATIC,
+                    className,
+                    global.getName(),
+                    descriptor(global.getType())
+            );
+        }
+
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // Create a Scanner on System.in.
+    private void generateScanner(MethodVisitor mv) {
+        mv.visitTypeInsn(NEW, "java/util/Scanner");
+        mv.visitInsn(DUP);
+        mv.visitFieldInsn(
+                GETSTATIC,
+                "java/lang/System",
+                "in",
+                "Ljava/io/InputStream;"
+        );
+        mv.visitMethodInsn(
+                INVOKESPECIAL,
+                "java/util/Scanner",
+                "<init>",
+                "(Ljava/io/InputStream;)V",
+                false
+        );
     }
 }
