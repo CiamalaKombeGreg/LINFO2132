@@ -563,8 +563,7 @@ public class CodeGenerator {
             return;
         }
 
-        if ("println".equals(name)) {
-
+        if ("println".equals(name) || "print".equals(name) || "print_INT".equals(name) || "print_FLOAT".equals(name)) {
             mv.visitFieldInsn(
                     GETSTATIC,
                     "java/lang/System",
@@ -572,11 +571,13 @@ public class CodeGenerator {
                     "Ljava/io/PrintStream;"
             );
 
+            boolean isPrintln = "println".equals(name);
+
             if (call.getArgs().isEmpty()) {
                 mv.visitMethodInsn(
                         INVOKEVIRTUAL,
                         "java/io/PrintStream",
-                        "println",
+                        isPrintln ? "println" : "print",
                         "()V",
                         false
                 );
@@ -585,7 +586,6 @@ public class CodeGenerator {
 
             if (call.getArgs().size() == 1) {
                 ExprNode arg = call.getArgs().get(0);
-
                 String argType = inferExprType(arg, ctx);
 
                 generateExpr(mv, arg, ctx);
@@ -593,14 +593,14 @@ public class CodeGenerator {
                 mv.visitMethodInsn(
                         INVOKEVIRTUAL,
                         "java/io/PrintStream",
-                        "println",
+                        isPrintln ? "println" : "print",
                         "(" + descriptor(argType) + ")V",
                         false
                 );
                 return;
             }
 
-            throw new RuntimeException("println accepts zero or one argument");
+            throw new RuntimeException(name + " accepts zero or one argument");
         }
 
         for (ExprNode arg : call.getArgs()) {
@@ -762,7 +762,7 @@ public class CodeGenerator {
                 String name = id.getName();
 
                 return switch (name) {
-                    case "println" -> "VOID";
+                    case "println", "print", "print_INT", "print_FLOAT" -> "VOID";
                     case "read_INT" -> "INT";
                     case "read_FLOAT" -> "FLOAT";
                     case "read_STRING" -> "STRING";
@@ -858,7 +858,15 @@ public class CodeGenerator {
                 return "()Ljava/lang/String;";
             }
 
-            case "println" -> {
+            case "print_INT" -> {
+                return "(I)V";
+            }
+
+            case "print_FLOAT" -> {
+                return "(F)V";
+            }
+
+            case "print", "println" -> {
                 if (call.getArgs().isEmpty()) {
                     return "()V";
                 }
