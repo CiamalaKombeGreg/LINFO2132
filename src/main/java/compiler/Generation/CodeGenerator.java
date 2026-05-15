@@ -19,6 +19,7 @@ import static org.objectweb.asm.Opcodes.ALOAD;
 import static org.objectweb.asm.Opcodes.ARETURN;
 import static org.objectweb.asm.Opcodes.ASTORE;
 import static org.objectweb.asm.Opcodes.BIPUSH;
+import static org.objectweb.asm.Opcodes.DUP;
 import static org.objectweb.asm.Opcodes.FADD;
 import static org.objectweb.asm.Opcodes.FCMPL;
 import static org.objectweb.asm.Opcodes.FCONST_0;
@@ -29,6 +30,7 @@ import static org.objectweb.asm.Opcodes.FREM;
 import static org.objectweb.asm.Opcodes.FRETURN;
 import static org.objectweb.asm.Opcodes.FSTORE;
 import static org.objectweb.asm.Opcodes.FSUB;
+import static org.objectweb.asm.Opcodes.GETFIELD;
 import static org.objectweb.asm.Opcodes.GETSTATIC;
 import static org.objectweb.asm.Opcodes.GOTO;
 import static org.objectweb.asm.Opcodes.IADD;
@@ -63,6 +65,7 @@ import static org.objectweb.asm.Opcodes.IREM;
 import static org.objectweb.asm.Opcodes.IRETURN;
 import static org.objectweb.asm.Opcodes.ISTORE;
 import static org.objectweb.asm.Opcodes.ISUB;
+import static org.objectweb.asm.Opcodes.NEW;
 import static org.objectweb.asm.Opcodes.NEWARRAY;
 import static org.objectweb.asm.Opcodes.POP;
 import static org.objectweb.asm.Opcodes.PUTFIELD;
@@ -79,6 +82,7 @@ import compiler.Parser.CallNode;
 import compiler.Parser.CollDeclNode;
 import compiler.Parser.ExprNode;
 import compiler.Parser.ExprStatementNode;
+import compiler.Parser.FieldAccessNode;
 import compiler.Parser.FieldNode;
 import compiler.Parser.ForNode;
 import compiler.Parser.FunctionDefNode;
@@ -97,6 +101,7 @@ public class CodeGenerator {
 
     private final String className;
     private final Map<String, FunctionDefNode> functions = new HashMap<>();
+    private final Map<String, CollDeclNode> collections = new HashMap<>();
 
     public CodeGenerator(String className) {
         this.className = className;
@@ -124,6 +129,7 @@ public class CodeGenerator {
         // Generate collection classes.
         for (ASTNode node : program.getElements()) {
             if (node instanceof CollDeclNode coll) {
+                collections.put(coll.getName(), coll);
                 generateCollectionClass(coll, outputPath);
             }
         }
@@ -280,6 +286,28 @@ public class CodeGenerator {
 
         // Assignment, for example: x = x + 1; or a[0] = 10;
         if (stmt instanceof AssignmentNode assignment) {
+
+            // Object field assignment: p.x = value
+            if (assignment.getTarget() instanceof FieldAccessNode field) {
+
+                // Load object reference.
+                generateExpr(mv, field.getTarget(), ctx);
+
+                // Load assigned value.
+                generateExpr(mv, assignment.getValue(), ctx);
+
+                String ownerType = inferExprType(field.getTarget(), ctx);
+                String fieldType = inferFieldType(ownerType, field.getFieldName());
+
+                mv.visitFieldInsn(
+                        PUTFIELD,
+                        ownerType,
+                        field.getFieldName(),
+                        descriptor(fieldType)
+                );
+
+                return;
+            }
 
             if (assignment.getTarget() instanceof IndexAccessNode index) {
                 generateExpr(mv, index.getTarget(), ctx);
@@ -554,6 +582,25 @@ public class CodeGenerator {
             return;
         }
 
+        // Field access: p.x
+        if (expr instanceof FieldAccessNode field) {
+
+            // Load target object.
+            generateExpr(mv, field.getTarget(), ctx);
+
+            String targetType = inferExprType(field.getTarget(), ctx);
+
+            // Load field value.
+            mv.visitFieldInsn(
+                    GETFIELD,
+                    targetType,
+                    field.getFieldName(),
+                    descriptor(inferFieldType(targetType, field.getFieldName()))
+            );
+
+            return;
+        }
+
         throw new RuntimeException(
                 "Step 5 code generation not implemented yet for expression: "
                         + expr.getClass().getSimpleName()
@@ -618,6 +665,43 @@ public class CodeGenerator {
         }
 
         String name = id.getName();
+
+        // Collection constructor: Point(...)
+        if (functions.get(name) == null
+                && !"println".equals(name)
+                && !"read_INT".equals(name)
+                && !"read_FLOAT".equals(name)
+                && !"read_STRING".equals(name)
+                && !"INT ARRAY".equals(name)) {
+
+            // Allocate object.
+            mv.visitTypeInsn(NEW, name);
+
+            // Duplicate reference because constructor consumes one.
+            mv.visitInsn(DUP);
+
+            StringBuilder desc = new StringBuilder();
+            desc.append("(");
+
+            // Generate constructor arguments.
+            for (ExprNode arg : call.getArgs()) {
+                generateExpr(mv, arg, ctx);
+                desc.append(descriptor(inferExprType(arg, ctx)));
+            }
+
+            desc.append(")V");
+
+            // Invoke constructor.
+            mv.visitMethodInsn(
+                    INVOKESPECIAL,
+                    name,
+                    "<init>",
+                    desc.toString(),
+                    false
+            );
+
+            return;
+        }
 
         // Array constructor: INT ARRAY [size]
         if ("INT ARRAY".equals(name)) {
@@ -883,6 +967,13 @@ public class CodeGenerator {
             );
         }
 
+        if (expr instanceof FieldAccessNode field) {
+
+            String ownerType = inferExprType(field.getTarget(), ctx);
+            
+            return inferFieldType(ownerType, field.getFieldName());
+        }
+
         throw new RuntimeException("Cannot infer expression type yet: " + expr.getClass().getSimpleName());
     }
 
@@ -972,7 +1063,16 @@ public class CodeGenerator {
 
     // Convert our language type names to JVM descriptors.
     private String descriptor(String type) {
-        return switch (normalizeType(type)) {
+
+        type = normalizeType(type);
+
+        // ARRAY[T] -> [descriptor(T)]
+        if (type.startsWith("ARRAY[")) {
+            String inner = type.substring(6, type.length() - 1);
+            return "[" + descriptor(inner);
+        }
+
+        return switch (type) {
             case "INT" -> "I";
             case "FLOAT" -> "F";
             case "BOOL" -> "Z";
@@ -1173,6 +1273,23 @@ public class CodeGenerator {
         }
 
         throw new RuntimeException("For loop needs an identifier or variable declaration as init");
+    }
+
+    // Resolve the type of a collection field.
+    private String inferFieldType(String collName, String fieldName) {
+        CollDeclNode coll = collections.get(collName);
+
+        if (coll == null) {
+            throw new RuntimeException("Unknown collection: " + collName);
+        }
+
+        for (FieldNode field : coll.getFields()) {
+            if (field.getName().equals(fieldName)) {
+                return normalizeType(field.getType());
+            }
+        }
+
+        throw new RuntimeException("Unknown field '" + fieldName + "' in collection '" + collName + "'");
     }
 
     // Generate collection constructor.
