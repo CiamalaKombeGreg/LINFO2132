@@ -2,8 +2,8 @@
 
 ## Authors
 
-- Greg Ciamala Kombe — greg.ciamala@student.uclouvain.be
-- Partner Name — martin.charlier@student.uclouvain.be
+- Greg Ciamala Kombe (DyoBrando) — greg.ciamala@student.uclouvain.be
+- Partner Name (Rickix-D) — martin.charlier@student.uclouvain.be
 
 ## Assistants
 
