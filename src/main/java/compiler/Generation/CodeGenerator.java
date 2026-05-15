@@ -19,6 +19,7 @@ import static org.objectweb.asm.Opcodes.ALOAD;
 import static org.objectweb.asm.Opcodes.ARETURN;
 import static org.objectweb.asm.Opcodes.ASTORE;
 import static org.objectweb.asm.Opcodes.BIPUSH;
+import static org.objectweb.asm.Opcodes.DUP;
 import static org.objectweb.asm.Opcodes.FADD;
 import static org.objectweb.asm.Opcodes.FCMPL;
 import static org.objectweb.asm.Opcodes.FCONST_0;
@@ -29,6 +30,7 @@ import static org.objectweb.asm.Opcodes.FREM;
 import static org.objectweb.asm.Opcodes.FRETURN;
 import static org.objectweb.asm.Opcodes.FSTORE;
 import static org.objectweb.asm.Opcodes.FSUB;
+import static org.objectweb.asm.Opcodes.GETFIELD;
 import static org.objectweb.asm.Opcodes.GETSTATIC;
 import static org.objectweb.asm.Opcodes.GOTO;
 import static org.objectweb.asm.Opcodes.IADD;
@@ -63,9 +65,11 @@ import static org.objectweb.asm.Opcodes.IREM;
 import static org.objectweb.asm.Opcodes.IRETURN;
 import static org.objectweb.asm.Opcodes.ISTORE;
 import static org.objectweb.asm.Opcodes.ISUB;
+import static org.objectweb.asm.Opcodes.NEW;
 import static org.objectweb.asm.Opcodes.NEWARRAY;
 import static org.objectweb.asm.Opcodes.POP;
 import static org.objectweb.asm.Opcodes.PUTFIELD;
+import static org.objectweb.asm.Opcodes.PUTSTATIC;
 import static org.objectweb.asm.Opcodes.RETURN;
 import static org.objectweb.asm.Opcodes.SIPUSH;
 import static org.objectweb.asm.Opcodes.T_INT;
@@ -79,6 +83,7 @@ import compiler.Parser.CallNode;
 import compiler.Parser.CollDeclNode;
 import compiler.Parser.ExprNode;
 import compiler.Parser.ExprStatementNode;
+import compiler.Parser.FieldAccessNode;
 import compiler.Parser.FieldNode;
 import compiler.Parser.ForNode;
 import compiler.Parser.FunctionDefNode;
@@ -105,11 +110,13 @@ public class CodeGenerator {
         this.className = className;
     }
 
-    // Generates the main class and output files.
     public void generate(ProgramNode program, String outputPath) throws IOException {
 
+        // ASM helper that builds the bytecode of the class.
+        // COMPUTE_FRAMES and COMPUTE_MAXS let ASM calculate stack frames and stack/local sizes automatically.
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
 
+        // Create the class header.
         cw.visit(
                 V17,
                 ACC_PUBLIC | ACC_SUPER,
@@ -119,34 +126,61 @@ public class CodeGenerator {
                 null
         );
 
+        // Every JVM class needs a constructor.
         generateConstructor(cw);
 
+        // Generate global variables as static fields.
+        for (ASTNode node : program.getElements()) {
+            if (node instanceof VarDeclNode global) {
+                cw.visitField(
+                        ACC_PUBLIC | ACC_STATIC,
+                        global.getName(),
+                        descriptor(global.getType()),
+                        null,
+                        null
+                ).visitEnd();
+            }
+        }
+
+        // Generate collection classes.
         for (ASTNode node : program.getElements()) {
             if (node instanceof CollDeclNode coll) {
+                collections.put(coll.getName(), coll);
                 generateCollectionClass(coll, outputPath);
             }
         }
 
+        // Register global variables.
+        for (ASTNode node : program.getElements()) {
+            if (node instanceof VarDeclNode global) {
+                globals.put(global.getName(), global);
+            }
+        }
+
+        // Register all functions before generation.
         for (ASTNode node : program.getElements()) {
             if (node instanceof FunctionDefNode fn) {
                 functions.put(fn.getName(), fn);
             }
         }
 
+        // Generate all functions.
         for (ASTNode node : program.getElements()) {
             if (node instanceof FunctionDefNode fn) {
                 generateFunction(cw, fn);
             }
         }
 
+        generateGlobalInitializer(cw);
+
         cw.visitEnd();
 
+        // Write the generated class bytes into the requested .class file.
         try (FileOutputStream out = new FileOutputStream(outputPath)) {
             out.write(cw.toByteArray());
         }
     }
 
-    // Adds the default Java constructor.
     private void generateConstructor(ClassWriter cw) {
 
         MethodVisitor mv = cw.visitMethod(
@@ -159,8 +193,10 @@ public class CodeGenerator {
 
         mv.visitCode();
 
+        // Load "this" onto the stack.
         mv.visitVarInsn(ALOAD, 0);
 
+        // Call Object constructor.
         mv.visitMethodInsn(
                 INVOKESPECIAL,
                 "java/lang/Object",
@@ -169,13 +205,15 @@ public class CodeGenerator {
                 false
         );
 
+        // End constructor.
         mv.visitInsn(RETURN);
 
+        // ASM computes stack/local sizes automatically because of COMPUTE_MAXS.
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
 
-    // Emits the JVM entry point.
+    // Generate: public static void main(String[] args)
     private void generateMain(ClassWriter cw, FunctionDefNode fn) {
 
         MethodVisitor mv = cw.visitMethod(
@@ -188,19 +226,24 @@ public class CodeGenerator {
 
         mv.visitCode();
 
+        // main is static and has String[] args in slot 0.
+        // Our first user variable therefore starts at slot 1.
         CodeGenContext ctx = new CodeGenContext(1);
 
+        // Generate all statements inside the block.
         generateBlock(mv, fn.getBody(), ctx);
 
+        // End main function.
         mv.visitInsn(RETURN);
 
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
 
-    // Emits a static method for a language function.
+    // Generate a user-defined function.
     private void generateFunction(ClassWriter cw, FunctionDefNode fn) {
 
+        // JVM main has a special signature.
         if ("main".equals(fn.getName())) {
             generateMain(cw, fn);
             return;
@@ -216,8 +259,10 @@ public class CodeGenerator {
 
         mv.visitCode();
 
+        // Static methods start at slot 0.
         CodeGenContext ctx = new CodeGenContext(0);
 
+        // Register parameters as local variables.
         for (ParamNode param : fn.getParams()) {
             ctx.declareLocal(
                     param.getName(),
@@ -225,8 +270,10 @@ public class CodeGenerator {
             );
         }
 
+        // Generate function body.
         generateBlock(mv, fn.getBody(), ctx);
 
+        // Safety return for VOID functions.
         if (fn.getReturnType() == null || "VOID".equals(fn.getReturnType())) {
             mv.visitInsn(RETURN);
         }
@@ -235,30 +282,57 @@ public class CodeGenerator {
         mv.visitEnd();
     }
 
-    // Emits every statement in a block.
+    // Generate all statements of a block one after another.
     private void generateBlock(MethodVisitor mv, BlockNode block, CodeGenContext ctx) {
         for (StatementNode stmt : block.getStatements()) {
             generateStatement(mv, stmt, ctx);
         }
     }
 
-    // Emits bytecode for one statement.
+    // Generate one statement.
     private void generateStatement(MethodVisitor mv, StatementNode stmt, CodeGenContext ctx) {
 
+        // Variable declaration, for example: INT x = 3;
         if (stmt instanceof VarDeclNode varDecl) {
             LocalVar local = ctx.declareLocal(varDecl.getName(), normalizeType(varDecl.getType()));
 
+            // If there is an initializer, generate its value.
             if (varDecl.getInitializer() != null) {
                 generateExpr(mv, varDecl.getInitializer(), ctx);
             } else {
+                // If no initializer exists, push a default value depending on the variable type.
                 generateDefaultValue(mv, local.getType());
             }
 
+            // Store the value from the stack into the local variable slot.
             storeLocal(mv, local);
             return;
         }
 
+        // Assignment, for example: x = x + 1; or a[0] = 10;
         if (stmt instanceof AssignmentNode assignment) {
+
+            // Object field assignment: p.x = value
+            if (assignment.getTarget() instanceof FieldAccessNode field) {
+
+                // Load object reference.
+                generateExpr(mv, field.getTarget(), ctx);
+
+                // Load assigned value.
+                generateExpr(mv, assignment.getValue(), ctx);
+
+                String ownerType = inferExprType(field.getTarget(), ctx);
+                String fieldType = inferFieldType(ownerType, field.getFieldName());
+
+                mv.visitFieldInsn(
+                        PUTFIELD,
+                        ownerType,
+                        field.getFieldName(),
+                        descriptor(fieldType)
+                );
+
+                return;
+            }
 
             if (assignment.getTarget() instanceof IndexAccessNode index) {
                 generateExpr(mv, index.getTarget(), ctx);
@@ -279,22 +353,38 @@ public class CodeGenerator {
             if (assignment.getTarget() instanceof IdentifierNode id) {
                 LocalVar local = ctx.resolveLocal(id.getName());
 
-                if (local == null) {
-                    throw new RuntimeException("Unknown local variable: " + id.getName());
+                generateExpr(mv, assignment.getValue(), ctx);
+
+                if (local != null) {
+                    storeLocal(mv, local);
+                    return;
                 }
 
-                generateExpr(mv, assignment.getValue(), ctx);
-                storeLocal(mv, local);
-                return;
+                VarDeclNode global = globals.get(id.getName());
+
+                if (global != null) {
+                    mv.visitFieldInsn(
+                            PUTSTATIC,
+                            className,
+                            global.getName(),
+                            descriptor(global.getType())
+                    );
+                    return;
+                }
+
+                throw new RuntimeException("Unknown variable: " + id.getName());
             }
 
             throw new RuntimeException("Unsupported assignment target: "
                     + assignment.getTarget().getClass().getSimpleName());
         }
 
+        // Expression statement, for example: println(x);
         if (stmt instanceof ExprStatementNode exprStmt) {
             generateExpr(mv, exprStmt.getExpr(), ctx);
 
+            // If the expression leaves a value on the stack, remove it.
+            // Calls like println return VOID, so nothing is popped in that case.
             String type = inferExprType(exprStmt.getExpr(), ctx);
             if (!"VOID".equals(type)) {
                 mv.visitInsn(POP);
@@ -302,50 +392,65 @@ public class CodeGenerator {
             return;
         }
 
+        // If statement.
         if (stmt instanceof IfNode ifNode) {
             Label elseLabel = new Label();
             Label endLabel = new Label();
 
+            // If condition is false, jump to else.
             generateConditionJump(mv, ifNode.getCondition(), ctx, false, elseLabel);
 
+            // Then branch.
             generateStatement(mv, ifNode.getThenBranch(), ctx);
 
+            // After then branch, skip else branch.
             mv.visitJumpInsn(GOTO, endLabel);
 
+            // Else branch.
             mv.visitLabel(elseLabel);
             if (ifNode.getElseBranch() != null) {
                 generateStatement(mv, ifNode.getElseBranch(), ctx);
             }
 
+            // End of if.
             mv.visitLabel(endLabel);
             return;
         }
 
+        // While loop.
         if (stmt instanceof WhileNode whileNode) {
             Label startLabel = new Label();
             Label endLabel = new Label();
 
+            // Start of loop condition.
             mv.visitLabel(startLabel);
 
+            // If condition is false, leave loop.
             generateConditionJump(mv, whileNode.getCondition(), ctx, false, endLabel);
 
+            // Loop body.
             generateStatement(mv, whileNode.getBody(), ctx);
 
+            // Go back to condition.
             mv.visitJumpInsn(GOTO, startLabel);
 
+            // End of loop.
             mv.visitLabel(endLabel);
             return;
         }
 
+        // Nested block.
         if (stmt instanceof BlockNode block) {
             generateBlock(mv, block, ctx);
             return;
         }
 
+        // For loop.
         if (stmt instanceof ForNode forNode) {
             Label startLabel = new Label();
             Label endLabel = new Label();
 
+            // Generate init part.
             if (forNode.getInit() instanceof StatementNode initStmt) {
                 generateStatement(mv, initStmt, ctx);
             } else if (forNode.getInit() instanceof ExprNode initExpr) {
@@ -363,33 +468,42 @@ public class CodeGenerator {
                 storeLocal(mv, loopVar);
             }
 
+            // Start of loop condition.
             mv.visitLabel(startLabel);
 
+            // If condition is false, exit loop.
             if (forNode.getCondition() != null) {
                 generateForConditionJump(mv, forNode, ctx, endLabel);
             }
 
+            // Body.
             generateStatement(mv, forNode.getBody(), ctx);
 
+            // Update part.
             if (forNode.getUpdate() instanceof StatementNode updateStmt) {
                 generateStatement(mv, updateStmt, ctx);
             } else if (forNode.getUpdate() instanceof ExprNode updateExpr) {
                 generateForUpdate(mv, forNode, updateExpr, ctx);
             }
 
+            // Go back to condition.
             mv.visitJumpInsn(GOTO, startLabel);
 
+            // End of loop.
             mv.visitLabel(endLabel);
             return;
         }
 
+        // Return statement.
         if (stmt instanceof ReturnNode ret) {
 
+            // return;
             if (ret.getExpr() == null) {
                 mv.visitInsn(RETURN);
                 return;
             }
 
+            // Generate returned value.
             generateExpr(mv, ret.getExpr(), ctx);
 
             String type = inferExprType(ret.getExpr(), ctx);
@@ -403,14 +517,19 @@ public class CodeGenerator {
             return;
         }
 
+        // Assignment.
         if (stmt instanceof AssignmentNode assign) {
 
+            // Array element assignment.
             if (assign.getTarget() instanceof IndexAccessNode index) {
 
+                // Load array reference.
                 generateExpr(mv, index.getTarget(), ctx);
 
+                // Load index.
                 generateExpr(mv, index.getIndex(), ctx);
 
+                // Load assigned value.
                 generateExpr(mv, assign.getValue(), ctx);
 
                 String targetType = inferExprType(index.getTarget(), ctx);
@@ -424,6 +543,7 @@ public class CodeGenerator {
                 return;
             }
 
+            // Normal variable assignment.
             if (assign.getTarget() instanceof IdentifierNode id) {
 
                 LocalVar local = ctx.resolveLocal(id.getName());
@@ -447,22 +567,37 @@ public class CodeGenerator {
         );
     }
 
-    // Emits bytecode for one expression.
+    // Generate expressions.
     private void generateExpr(MethodVisitor mv, ExprNode expr, CodeGenContext ctx) {
 
+        // Literal value.
         if (expr instanceof LiteralNode literal) {
             generateLiteral(mv, literal);
             return;
         }
 
+        // Variable access.
         if (expr instanceof IdentifierNode id) {
             LocalVar local = ctx.resolveLocal(id.getName());
-            if (local == null) {
-                throw new RuntimeException("Unknown local variable: " + id.getName());
+
+            if (local != null) {
+                loadLocal(mv, local);
+                return;
             }
 
-            loadLocal(mv, local);
-            return;
+            VarDeclNode global = globals.get(id.getName());
+
+            if (global != null) {
+                mv.visitFieldInsn(
+                        GETSTATIC,
+                        className,
+                        global.getName(),
+                        descriptor(global.getType())
+                );
+                return;
+            }
+
+            throw new RuntimeException("Unknown variable: " + id.getName());
         }
 
         if (expr instanceof UnaryExprNode unary) {
@@ -470,20 +605,25 @@ public class CodeGenerator {
             return;
         }
 
+        // Binary expression, for example: x + y.
         if (expr instanceof BinaryExprNode bin) {
             generateBinaryExpr(mv, bin, ctx);
             return;
         }
 
+        // Function call.
         if (expr instanceof CallNode call) {
             generateCall(mv, call, ctx);
             return;
         }
 
+        // Array indexing.
         if (expr instanceof IndexAccessNode index) {
 
+            // Load array reference.
             generateExpr(mv, index.getTarget(), ctx);
 
+            // Load index.
             generateExpr(mv, index.getIndex(), ctx);
 
             String targetType = inferExprType(index.getTarget(), ctx);
@@ -497,56 +637,29 @@ public class CodeGenerator {
             return;
         }
 
+        // Field access: p.x
+        if (expr instanceof FieldAccessNode field) {
+
+            // Load target object.
+            generateExpr(mv, field.getTarget(), ctx);
+
+            String targetType = inferExprType(field.getTarget(), ctx);
+
+            // Load field value.
+            mv.visitFieldInsn(
+                    GETFIELD,
+                    targetType,
+                    field.getFieldName(),
+                    descriptor(inferFieldType(targetType, field.getFieldName()))
+            );
+
+            return;
+        }
+
         throw new RuntimeException(
                 "Step 5 code generation not implemented yet for expression: "
                         + expr.getClass().getSimpleName()
         );
-    }
-
-    // Emits arithmetic, comparison, and logical expressions.
-    private void generateBinaryExpr(MethodVisitor mv, BinaryExprNode bin, CodeGenContext ctx) {
-        String type = inferExprType(bin.getLeft(), ctx);
-        String op = bin.getOperator();
-
-        if (isComparisonOperator(op)) {
-            generateComparisonExpr(mv, bin, ctx);
-            return;
-        }
-
-        if ("&&".equals(op) || "||".equals(op)) {
-            generateLogicalExpr(mv, bin, ctx);
-            return;
-        }
-
-        generateExpr(mv, bin.getLeft(), ctx);
-
-        generateExpr(mv, bin.getRight(), ctx);
-
-        if ("INT".equals(type) || "BOOL".equals(type)) {
-            switch (op) {
-                case "+" -> mv.visitInsn(IADD);
-                case "-" -> mv.visitInsn(ISUB);
-                case "*" -> mv.visitInsn(IMUL);
-                case "/" -> mv.visitInsn(IDIV);
-                case "%" -> mv.visitInsn(IREM);
-                default -> throw new RuntimeException("Step 5 only supports arithmetic operators, got: " + op);
-            }
-            return;
-        }
-
-        if ("FLOAT".equals(type)) {
-            switch (op) {
-                case "+" -> mv.visitInsn(FADD);
-                case "-" -> mv.visitInsn(FSUB);
-                case "*" -> mv.visitInsn(FMUL);
-                case "/" -> mv.visitInsn(FDIV);
-                case "%" -> mv.visitInsn(FREM);
-                default -> throw new RuntimeException("Step 5 only supports arithmetic operators, got: " + op);
-            }
-            return;
-        }
-
-        throw new RuntimeException("Unsupported binary expression type: " + type);
     }
 
     private void generateUnaryExpr(MethodVisitor mv, UnaryExprNode unary, CodeGenContext ctx) {
@@ -589,7 +702,57 @@ public class CodeGenerator {
         throw new RuntimeException("Unsupported unary operator: " + op);
     }
 
-    // Emits built-ins, constructors, and function calls.
+    // Generate a binary expression.
+    private void generateBinaryExpr(MethodVisitor mv, BinaryExprNode bin, CodeGenContext ctx) {
+        String type = inferExprType(bin.getLeft(), ctx);
+        String op = bin.getOperator();
+
+        if (isComparisonOperator(op)) {
+            generateComparisonExpr(mv, bin, ctx);
+            return;
+        }
+
+        if ("&&".equals(op) || "||".equals(op)) {
+            generateLogicalExpr(mv, bin, ctx);
+            return;
+        }
+
+        // Generate left operand first.
+        generateExpr(mv, bin.getLeft(), ctx);
+
+        // Generate right operand second.
+        generateExpr(mv, bin.getRight(), ctx);
+
+        // Integer and boolean values are represented with int bytecode instructions.
+        if ("INT".equals(type) || "BOOL".equals(type)) {
+            switch (op) {
+                case "+" -> mv.visitInsn(IADD);
+                case "-" -> mv.visitInsn(ISUB);
+                case "*" -> mv.visitInsn(IMUL);
+                case "/" -> mv.visitInsn(IDIV);
+                case "%" -> mv.visitInsn(IREM);
+                default -> throw new RuntimeException("Step 5 only supports arithmetic operators, got: " + op);
+            }
+            return;
+        }
+
+        // Float operations use float bytecode instructions.
+        if ("FLOAT".equals(type)) {
+            switch (op) {
+                case "+" -> mv.visitInsn(FADD);
+                case "-" -> mv.visitInsn(FSUB);
+                case "*" -> mv.visitInsn(FMUL);
+                case "/" -> mv.visitInsn(FDIV);
+                case "%" -> mv.visitInsn(FREM);
+                default -> throw new RuntimeException("Step 5 only supports arithmetic operators, got: " + op);
+            }
+            return;
+        }
+
+        throw new RuntimeException("Unsupported binary expression type: " + type);
+    }
+
+    // Generate a function call.
     private void generateCall(MethodVisitor mv, CallNode call, CodeGenContext ctx) {
 
         if (!(call.getCallee() instanceof IdentifierNode id)) {
@@ -599,36 +762,40 @@ public class CodeGenerator {
         String name = id.getName();
 
         if ("INT ARRAY".equals(name)) {
-
             if (call.getArgs().size() != 1) {
                 throw new RuntimeException("INT ARRAY expects one size argument");
             }
 
             generateExpr(mv, call.getArgs().get(0), ctx);
-
             mv.visitIntInsn(NEWARRAY, T_INT);
+            return;
+        }
 
+        if ("read_INT".equals(name)) {
+            generateScanner(mv);
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/util/Scanner", "nextInt", "()I", false);
+            return;
+        }
+
+        if ("read_FLOAT".equals(name)) {
+            generateScanner(mv);
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/util/Scanner", "nextFloat", "()F", false);
+            return;
+        }
+
+        if ("read_STRING".equals(name)) {
+            generateScanner(mv);
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/util/Scanner", "nextLine", "()Ljava/lang/String;", false);
             return;
         }
 
         if ("println".equals(name) || "print".equals(name) || "print_INT".equals(name) || "print_FLOAT".equals(name)) {
-            mv.visitFieldInsn(
-                    GETSTATIC,
-                    "java/lang/System",
-                    "out",
-                    "Ljava/io/PrintStream;"
-            );
+            mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
 
             boolean isPrintln = "println".equals(name);
 
             if (call.getArgs().isEmpty()) {
-                mv.visitMethodInsn(
-                        INVOKEVIRTUAL,
-                        "java/io/PrintStream",
-                        isPrintln ? "println" : "print",
-                        "()V",
-                        false
-                );
+                mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", isPrintln ? "println" : "print", "()V", false);
                 return;
             }
 
@@ -651,6 +818,24 @@ public class CodeGenerator {
             throw new RuntimeException(name + " accepts zero or one argument");
         }
 
+        if (collections.containsKey(name)) {
+            mv.visitTypeInsn(NEW, name);
+            mv.visitInsn(DUP);
+
+            StringBuilder desc = new StringBuilder();
+            desc.append("(");
+
+            for (ExprNode arg : call.getArgs()) {
+                generateExpr(mv, arg, ctx);
+                desc.append(descriptor(inferExprType(arg, ctx)));
+            }
+
+            desc.append(")V");
+
+            mv.visitMethodInsn(INVOKESPECIAL, name, "<init>", desc.toString(), false);
+            return;
+        }
+
         for (ExprNode arg : call.getArgs()) {
             generateExpr(mv, arg, ctx);
         }
@@ -662,11 +847,9 @@ public class CodeGenerator {
                 inferCallDescriptor(call, ctx),
                 false
         );
-
-        return;
     }
 
-    // Writes a JVM class for a collection.
+    // Generate a JVM class for a collection.
     private void generateCollectionClass(CollDeclNode coll, String outputPath) throws IOException {
 
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
@@ -680,6 +863,7 @@ public class CodeGenerator {
                 null
         );
 
+        // Generate fields.
         for (FieldNode field : coll.getFields()) {
 
             cw.visitField(
@@ -695,36 +879,43 @@ public class CodeGenerator {
 
         cw.visitEnd();
 
-        File outFile = new File(outputPath).getParentFile();
+        File mainClassFile = new File(outputPath).getAbsoluteFile();
+        File outputDir = mainClassFile.getParentFile();
 
-        if (outFile == null) {
-            outFile = new File(".");
+        if (outputDir == null) {
+            outputDir = new File(".");
         }
 
+        outputDir.mkdirs();
+
         try (FileOutputStream out = new FileOutputStream(
-                new File(outFile, coll.getName() + ".class"))) {
+                new File(outputDir, coll.getName() + ".class"))) {
 
             out.write(cw.toByteArray());
         }
     }
 
-    // Pushes literal values on the stack.
+    // Generate literal values.
     private void generateLiteral(MethodVisitor mv, LiteralNode literal) {
 
         switch (literal.getKind()) {
+            // Push an integer constant onto the JVM stack.
             case "Integer" -> pushInt(mv, Integer.parseInt(literal.getValue()));
 
+            // Push a float constant onto the JVM stack.
             case "Float" -> mv.visitLdcInsn(Float.parseFloat(literal.getValue()));
 
+            // Push a string constant onto the JVM stack.
             case "String" -> mv.visitLdcInsn(literal.getValue());
 
+            // Push a boolean as 0 or 1 onto the JVM stack.
             case "Boolean" -> mv.visitInsn(Boolean.parseBoolean(literal.getValue()) ? ICONST_1 : ICONST_0);
 
             default -> throw new RuntimeException("Unknown literal kind: " + literal.getKind());
         }
     }
 
-    // Pushes default values for variables.
+    // Push a default value for an uninitialized local variable.
     private void generateDefaultValue(MethodVisitor mv, String type) {
         switch (type) {
             case "INT", "BOOL" -> mv.visitInsn(ICONST_0);
@@ -734,7 +925,7 @@ public class CodeGenerator {
         }
     }
 
-    // Pushes an integer with a compact instruction.
+    // Push an integer using the smallest convenient JVM instruction.
     private void pushInt(MethodVisitor mv, int value) {
         switch (value) {
             case -1 -> mv.visitInsn(ICONST_M1);
@@ -756,7 +947,7 @@ public class CodeGenerator {
         }
     }
 
-    // Reads a local variable.
+    // Load a local variable from its JVM slot onto the stack.
     private void loadLocal(MethodVisitor mv, LocalVar local) {
         switch (local.getType()) {
             case "INT", "BOOL" -> mv.visitVarInsn(ILOAD, local.getSlot());
@@ -766,7 +957,7 @@ public class CodeGenerator {
         }
     }
 
-    // Writes a local variable.
+    // Store the top value of the JVM stack into a local variable slot.
     private void storeLocal(MethodVisitor mv, LocalVar local) {
         switch (local.getType()) {
             case "INT", "BOOL" -> mv.visitVarInsn(ISTORE, local.getSlot());
@@ -776,7 +967,8 @@ public class CodeGenerator {
         }
     }
 
-    // Finds the JVM type of an expression.
+    // Infer a simple expression type for code generation.
+    // Semantic analysis already checked correctness, so this is only used to choose JVM instructions.
     private String inferExprType(ExprNode expr, CodeGenContext ctx) {
 
         if (expr instanceof LiteralNode literal) {
@@ -791,10 +983,18 @@ public class CodeGenerator {
 
         if (expr instanceof IdentifierNode id) {
             LocalVar local = ctx.resolveLocal(id.getName());
-            if (local == null) {
-                throw new RuntimeException("Unknown local variable: " + id.getName());
+
+            if (local != null) {
+                return local.getType();
             }
-            return local.getType();
+
+            VarDeclNode global = globals.get(id.getName());
+
+            if (global != null) {
+                return normalizeType(global.getType());
+            }
+
+            throw new RuntimeException("Unknown variable: " + id.getName());
         }
 
         if (expr instanceof UnaryExprNode unary) {
@@ -828,15 +1028,26 @@ public class CodeGenerator {
                     default -> {
                         FunctionDefNode fn = functions.get(name);
 
-                        if (fn == null) {
-                            throw new RuntimeException("Unknown function: " + name);
+                        if (fn != null) {
+                            if (fn.getReturnType() == null) {
+                                yield "VOID";
+                            }
+
+                            yield normalizeType(fn.getReturnType());
                         }
 
-                        if (fn.getReturnType() == null) {
-                            yield "VOID";
+                        CollDeclNode coll = collections.get(name);
+
+                        if (coll != null) {
+                            yield coll.getName();
                         }
 
-                        yield normalizeType(fn.getReturnType());
+                        if (name.endsWith(" ARRAY")) {
+                            String baseType = name.substring(0, name.length() - " ARRAY".length());
+                            yield "ARRAY[" + normalizeType(baseType) + "]";
+                        }
+
+                        throw new RuntimeException("Unknown function or collection constructor: " + name);
                     }
                 };
             }
@@ -855,16 +1066,23 @@ public class CodeGenerator {
             );
         }
 
+        if (expr instanceof FieldAccessNode field) {
+
+            String ownerType = inferExprType(field.getTarget(), ctx);
+            
+            return inferFieldType(ownerType, field.getFieldName());
+        }
+
         throw new RuntimeException("Cannot infer expression type yet: " + expr.getClass().getSimpleName());
     }
 
-    // Normalizes type aliases.
+    // Normalize alternate type names to the names used internally by code generation.
     private String normalizeType(String type) {
         if ("BOOLEAN".equals(type)) return "BOOL";
         return type;
     }
 
-    // Builds a JVM descriptor for a function.
+    // Build JVM descriptor for a function.
     private String methodDescriptor(FunctionDefNode fn) {
         StringBuilder sb = new StringBuilder();
 
@@ -885,7 +1103,7 @@ public class CodeGenerator {
         return sb.toString();
     }
 
-    // Builds a JVM descriptor for a call.
+    // Infer descriptor for a function call.
     private String inferCallDescriptor(CallNode call, CodeGenContext ctx) {
         if (!(call.getCallee() instanceof IdentifierNode id)) {
             throw new RuntimeException("Only simple function calls are supported for now");
@@ -903,6 +1121,7 @@ public class CodeGenerator {
 
         sb.append(")");
 
+        // Built-ins.
         switch (name) {
             case "read_INT" -> {
                 return "()I";
@@ -936,35 +1155,31 @@ public class CodeGenerator {
 
         FunctionDefNode fn = functions.get(name);
 
-        if (fn != null) {
-            if (fn.getReturnType() == null) {
-                sb.append("V");
-            } else {
-                sb.append(descriptor(fn.getReturnType()));
-            }
-
-            return sb.toString();
+        if (fn == null) {
+            throw new RuntimeException("Unknown function: " + name);
         }
 
-        CollDeclNode coll = collections.get(name);
-
-        if (coll != null) {
-            sb.append(descriptor(coll.getName()));
-            return sb.toString();
+        if (fn.getReturnType() == null) {
+            sb.append("V");
+        } else {
+            sb.append(descriptor(fn.getReturnType()));
         }
 
-        if (name.endsWith(" ARRAY")) {
-            String baseType = name.substring(0, name.length() - " ARRAY".length());
-            sb.append(descriptor("ARRAY[" + normalizeType(baseType) + "]"));
-            return sb.toString();
-        }
-
-        throw new RuntimeException("Unknown function or collection constructor: " + name);
+        return sb.toString();
     }
 
-    // Converts language types to JVM descriptors.
+    // Convert our language type names to JVM descriptors.
     private String descriptor(String type) {
-        return switch (normalizeType(type)) {
+
+        type = normalizeType(type);
+
+        // ARRAY[T] -> [descriptor(T)]
+        if (type.startsWith("ARRAY[")) {
+            String inner = type.substring(6, type.length() - 1);
+            return "[" + descriptor(inner);
+        }
+
+        return switch (type) {
             case "INT" -> "I";
             case "FLOAT" -> "F";
             case "BOOL" -> "Z";
@@ -974,7 +1189,6 @@ public class CodeGenerator {
         };
     }
 
-    // Checks comparison operators.
     private boolean isComparisonOperator(String op) {
         return "==".equals(op)
                 || "=/=".equals(op)
@@ -985,7 +1199,7 @@ public class CodeGenerator {
                 || "->".equals(op);
     }
 
-    // Emits a comparison as 0 or 1.
+    // Generate a condition as a real boolean value on stack: 0 or 1.
     private void generateComparisonExpr(MethodVisitor mv, BinaryExprNode bin, CodeGenContext ctx) {
         Label trueLabel = new Label();
         Label endLabel = new Label();
@@ -1001,7 +1215,7 @@ public class CodeGenerator {
         mv.visitLabel(endLabel);
     }
 
-    // Emits logical operators as 0 or 1.
+    // Generate && and || as boolean values on stack.
     private void generateLogicalExpr(MethodVisitor mv, BinaryExprNode bin, CodeGenContext ctx) {
         Label trueLabel = new Label();
         Label falseLabel = new Label();
@@ -1019,7 +1233,7 @@ public class CodeGenerator {
         mv.visitLabel(endLabel);
     }
 
-    // Emits a branch based on a condition.
+    // Jump depending on whether condition should be true or false.
     private void generateConditionJump(MethodVisitor mv, ExprNode condition, CodeGenContext ctx, boolean jumpOnTrue, Label target) {
         if (condition instanceof BinaryExprNode bin) {
             String op = bin.getOperator();
@@ -1056,15 +1270,16 @@ public class CodeGenerator {
             }
         }
 
+        // General boolean expression: generate value, then compare with 0.
         generateExpr(mv, condition, ctx);
         mv.visitJumpInsn(jumpOnTrue ? IFNE : IFEQ, target);
     }
 
-    // Emits comparison jump instructions.
     private void generateComparisonJump(MethodVisitor mv, BinaryExprNode bin, CodeGenContext ctx, boolean jumpOnTrue, Label target) {
         String leftType = inferExprType(bin.getLeft(), ctx);
         String op = bin.getOperator();
 
+        // Special case for the range operator. For now, we interpret "a -> b" as true, because the current parser represents it as a boolean condition, but does not connect it automatically to the loop variable yet.
         if ("->".equals(op)) {
             mv.visitInsn(ICONST_1);
             mv.visitJumpInsn(jumpOnTrue ? IFNE : IFEQ, target);
@@ -1104,38 +1319,42 @@ public class CodeGenerator {
         mv.visitJumpInsn(opcode, target);
     }
 
-    // Emits the condition branch for for loops.
     private void generateForConditionJump(MethodVisitor mv, ForNode forNode, CodeGenContext ctx, Label endLabel) {
         ExprNode condition = forNode.getCondition();
 
+        // Special handling for: for (i; start -> end; i+1)
         if (condition instanceof BinaryExprNode bin && "->".equals(bin.getOperator())) {
             LocalVar loopVar = getForLoopVariable(forNode, ctx);
 
-            generateExpr(mv, bin.getRight(), ctx);
             loadLocal(mv, loopVar);
+            generateExpr(mv, bin.getRight(), ctx);
 
-            mv.visitJumpInsn(IF_ICMPLT, endLabel);
+            // if upperBound < i, end loop
+            mv.visitJumpInsn(IF_ICMPGE, endLabel);
             return;
         }
 
         generateConditionJump(mv, condition, ctx, false, endLabel);
     }
 
-    // Emits the update part of a for loop.
     private void generateForUpdate(MethodVisitor mv, ForNode forNode, ExprNode updateExpr, CodeGenContext ctx) {
         LocalVar loopVar = getForLoopVariable(forNode, ctx);
 
+        // Special handling for update like: i + 1
         if (updateExpr instanceof BinaryExprNode bin
                 && bin.getLeft() instanceof IdentifierNode id
                 && id.getName().equals(loopVar.getName())
                 && "+".equals(bin.getOperator())) {
 
+            // Generate i + right.
             generateExpr(mv, bin, ctx);
 
+            // Store result back into i.
             storeLocal(mv, loopVar);
             return;
         }
 
+        // Generic expression update.
         generateExpr(mv, updateExpr, ctx);
         String updateType = inferExprType(updateExpr, ctx);
         if (!"VOID".equals(updateType)) {
@@ -1143,7 +1362,6 @@ public class CodeGenerator {
         }
     }
 
-    // Resolves the variable controlled by a for loop.
     private LocalVar getForLoopVariable(ForNode forNode, CodeGenContext ctx) {
         if (forNode.getInit() instanceof IdentifierNode id) {
             LocalVar local = ctx.resolveLocal(id.getName());
@@ -1164,7 +1382,24 @@ public class CodeGenerator {
         throw new RuntimeException("For loop needs an identifier or variable declaration as init");
     }
 
-    // Emits a constructor for a collection class.
+    // Resolve the type of a collection field.
+    private String inferFieldType(String collName, String fieldName) {
+        CollDeclNode coll = collections.get(collName);
+
+        if (coll == null) {
+            throw new RuntimeException("Unknown collection: " + collName);
+        }
+
+        for (FieldNode field : coll.getFields()) {
+            if (field.getName().equals(fieldName)) {
+                return normalizeType(field.getType());
+            }
+        }
+
+        throw new RuntimeException("Unknown field '" + fieldName + "' in collection '" + collName + "'");
+    }
+
+    // Generate collection constructor.
     private void generateCollectionConstructor(ClassWriter cw, CollDeclNode coll) {
 
         StringBuilder desc = new StringBuilder();
@@ -1187,6 +1422,7 @@ public class CodeGenerator {
 
         mv.visitCode();
 
+        // Call Object constructor.
         mv.visitVarInsn(ALOAD, 0);
 
         mv.visitMethodInsn(
@@ -1199,6 +1435,7 @@ public class CodeGenerator {
 
         int slot = 1;
 
+        // Assign constructor parameters into fields.
         for (FieldNode field : coll.getFields()) {
 
             mv.visitVarInsn(ALOAD, 0);
@@ -1223,5 +1460,58 @@ public class CodeGenerator {
 
         mv.visitMaxs(0, 0);
         mv.visitEnd();
+    }
+
+    // Generate static global initialisation.
+    private void generateGlobalInitializer(ClassWriter cw) {
+        MethodVisitor mv = cw.visitMethod(
+                ACC_STATIC,
+                "<clinit>",
+                "()V",
+                null,
+                null
+        );
+
+        mv.visitCode();
+
+        CodeGenContext ctx = new CodeGenContext(0);
+
+        for (VarDeclNode global : globals.values()) {
+            if (global.getInitializer() != null) {
+                generateExpr(mv, global.getInitializer(), ctx);
+            } else {
+                generateDefaultValue(mv, normalizeType(global.getType()));
+            }
+
+            mv.visitFieldInsn(
+                    PUTSTATIC,
+                    className,
+                    global.getName(),
+                    descriptor(global.getType())
+            );
+        }
+
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    // Create a Scanner on System.in.
+    private void generateScanner(MethodVisitor mv) {
+        mv.visitTypeInsn(NEW, "java/util/Scanner");
+        mv.visitInsn(DUP);
+        mv.visitFieldInsn(
+                GETSTATIC,
+                "java/lang/System",
+                "in",
+                "Ljava/io/InputStream;"
+        );
+        mv.visitMethodInsn(
+                INVOKESPECIAL,
+                "java/util/Scanner",
+                "<init>",
+                "(Ljava/io/InputStream;)V",
+                false
+        );
     }
 }
