@@ -1,0 +1,7 @@
+INT x = 5;
+
+def main() {
+    println(x);
+    x = x + 2;
+    println(x);
+}

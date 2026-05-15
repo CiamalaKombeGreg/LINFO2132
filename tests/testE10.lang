@@ -1,0 +1,7 @@
+# Handled by semantic analyze
+
+def main() {
+    STRING a = "hello";
+    STRING b = "world";
+    println(a - b);
+}

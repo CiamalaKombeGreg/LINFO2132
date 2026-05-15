@@ -1,0 +1,7 @@
+# Handled by Lexer/Parser
+
+def main() {
+    INT x = 3;
+    INT y = 2;
+    println(x ^ y);
+}

@@ -1,0 +1,8 @@
+coll Point {
+    INT x;
+}
+
+def main() {
+    Point p = Point(3);
+    println(p.y);
+}

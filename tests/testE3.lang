@@ -1,0 +1,5 @@
+# Catched by parser
+
+def main() {
+    INT[] a = INT ARRAY [1, 2];
+}

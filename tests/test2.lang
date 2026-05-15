@@ -1,0 +1,18 @@
+def main() {
+    INT x = 3;
+    INT y = 4;
+    INT z = x + y * 2;
+    println(z);
+
+    FLOAT f = 3.2 * 5.0;
+    println(f);
+
+    STRING s = "hello";
+    println(s);
+
+    BOOL b = true;
+    println(b);
+
+    x = (x + 2) * 2;
+    println(x);
+}

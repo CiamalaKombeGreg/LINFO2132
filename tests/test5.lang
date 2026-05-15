@@ -1,0 +1,7 @@
+def INT square(INT v) {
+    return v * v;
+}
+
+def main() {
+    println(square(5));
+}

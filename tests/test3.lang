@@ -1,0 +1,15 @@
+def main() {
+    INT x = 5;
+    INT y = 10;
+
+    if (x < y) {
+        println("x smaller");
+    } else {
+        println("x bigger");
+    }
+
+    while (x < 8) {
+        println(x);
+        x = x + 1;
+    }
+}

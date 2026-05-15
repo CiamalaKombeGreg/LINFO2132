@@ -1,0 +1,10 @@
+def main() {
+
+    INT[] a = INT ARRAY [5];
+
+    a[0] = 10;
+    a[1] = 20;
+
+    println(a[0]);
+    println(a[1]);
+}

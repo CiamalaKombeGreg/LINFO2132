@@ -1,0 +1,12 @@
+def FLOAT half(FLOAT x) {
+    return x / 2.0;
+}
+
+def STRING hello() {
+    return "hello";
+}
+
+def main() {
+    println(half(10.0));
+    println(hello());
+}
