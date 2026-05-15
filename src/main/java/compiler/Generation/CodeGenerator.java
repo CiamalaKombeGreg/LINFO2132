@@ -98,6 +98,8 @@ public class CodeGenerator {
 
     private final String className;
     private final Map<String, FunctionDefNode> functions = new HashMap<>();
+    private final Map<String, CollDeclNode> collections = new HashMap<>();
+    private final Map<String, VarDeclNode> globals = new HashMap<>();
 
     public CodeGenerator(String className) {
         this.className = className;
@@ -934,17 +936,30 @@ public class CodeGenerator {
 
         FunctionDefNode fn = functions.get(name);
 
-        if (fn == null) {
-            throw new RuntimeException("Unknown function: " + name);
+        if (fn != null) {
+            if (fn.getReturnType() == null) {
+                sb.append("V");
+            } else {
+                sb.append(descriptor(fn.getReturnType()));
+            }
+
+            return sb.toString();
         }
 
-        if (fn.getReturnType() == null) {
-            sb.append("V");
-        } else {
-            sb.append(descriptor(fn.getReturnType()));
+        CollDeclNode coll = collections.get(name);
+
+        if (coll != null) {
+            sb.append(descriptor(coll.getName()));
+            return sb.toString();
         }
 
-        return sb.toString();
+        if (name.endsWith(" ARRAY")) {
+            String baseType = name.substring(0, name.length() - " ARRAY".length());
+            sb.append(descriptor("ARRAY[" + normalizeType(baseType) + "]"));
+            return sb.toString();
+        }
+
+        throw new RuntimeException("Unknown function or collection constructor: " + name);
     }
 
     // Converts language types to JVM descriptors.
