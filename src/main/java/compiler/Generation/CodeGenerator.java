@@ -90,6 +90,7 @@ import compiler.Parser.ParamNode;
 import compiler.Parser.ProgramNode;
 import compiler.Parser.ReturnNode;
 import compiler.Parser.StatementNode;
+import compiler.Parser.UnaryExprNode;
 import compiler.Parser.VarDeclNode;
 import compiler.Parser.WhileNode;
 
@@ -462,6 +463,11 @@ public class CodeGenerator {
             return;
         }
 
+        if (expr instanceof UnaryExprNode unary) {
+            generateUnaryExpr(mv, unary, ctx);
+            return;
+        }
+
         if (expr instanceof BinaryExprNode bin) {
             generateBinaryExpr(mv, bin, ctx);
             return;
@@ -539,6 +545,46 @@ public class CodeGenerator {
         }
 
         throw new RuntimeException("Unsupported binary expression type: " + type);
+    }
+
+    private void generateUnaryExpr(MethodVisitor mv, UnaryExprNode unary, CodeGenContext ctx) {
+        String op = unary.getOperator();
+        String type = inferExprType(unary.getExpr(), ctx);
+
+        generateExpr(mv, unary.getExpr(), ctx);
+
+        if ("-".equals(op)) {
+            switch (type) {
+                case "INT" -> {
+                    pushInt(mv, -1);
+                    mv.visitInsn(IMUL);
+                    return;
+                }
+                case "FLOAT" -> {
+                    mv.visitLdcInsn(-1.0f);
+                    mv.visitInsn(FMUL);
+                    return;
+                }
+                default -> throw new RuntimeException("Unary - is not supported for type: " + type);
+            }
+        }
+
+        if ("not".equals(op)) {
+            Label trueLabel = new Label();
+            Label endLabel = new Label();
+
+            mv.visitJumpInsn(IFEQ, trueLabel);
+            mv.visitInsn(ICONST_0);
+            mv.visitJumpInsn(GOTO, endLabel);
+
+            mv.visitLabel(trueLabel);
+            mv.visitInsn(ICONST_1);
+
+            mv.visitLabel(endLabel);
+            return;
+        }
+
+        throw new RuntimeException("Unsupported unary operator: " + op);
     }
 
     // Emits built-ins, constructors, and function calls.
@@ -747,6 +793,16 @@ public class CodeGenerator {
                 throw new RuntimeException("Unknown local variable: " + id.getName());
             }
             return local.getType();
+        }
+
+        if (expr instanceof UnaryExprNode unary) {
+            String op = unary.getOperator();
+
+            if ("not".equals(op)) {
+                return "BOOL";
+            }
+
+            return inferExprType(unary.getExpr(), ctx);
         }
 
         if (expr instanceof BinaryExprNode bin) {
